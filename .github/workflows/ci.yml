@@ -1,0 +1,80 @@
+name: CI
+
+# Every push runs the whole matrix. The package claims OS independence and
+# Python 3.10-3.14 in its classifiers, and a portability claim tested only when
+# somebody remembers to trigger it by hand is a claim about the day they
+# remembered.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Formatting
+        run: ruff format --check .
+      - name: Lint
+        run: ruff check .
+      # The wheel ships `py.typed`, so anything installing this package checks
+      # its own code against these annotations. This is what makes that marker
+      # true rather than merely present — the build job asserts it shipped, and
+      # this asserts it was worth shipping.
+      - name: Types
+        run: mypy
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Bare pip cannot replace its own executable on Windows.
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev,youtube]"
+      - name: Tests, with the coverage gate
+        run: |
+          coverage run -m pytest
+          coverage report
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - name: Metadata is well formed
+        run: twine check dist/*
+      # The MIT distribution must not include CC BY-NC-SA caption fixtures.
+      - name: No test fixtures escaped into the sdist
+        run: |
+          if tar -tzf dist/*.tar.gz | grep -E 'tests/|fixtures/'; then
+            echo "::error::test fixtures leaked into the sdist"
+            exit 1
+          fi
+      - name: The typing marker shipped
+        run: python -c "import zipfile,glob; names=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert 'youtube_transcript_notes/py.typed' in names, names"

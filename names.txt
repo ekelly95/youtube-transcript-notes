@@ -1,0 +1,74 @@
+# Names youtube-transcript-notes should watch for, and the wrong spellings already seen.
+#
+# A bare term catches near-misses of it — anything within a character or two.
+# "Term: wrong, wrong" also catches those exact forms, which is how the errors
+# too far from the spelling to guess at get caught.
+#
+# Seeded from a handful of conference talks on agent engineering, which is why
+# the entries lean that way. Add to it whenever you spot a mangled name: every
+# line pays off again on the next lecture.
+
+# --- Anthropic -------------------------------------------------------------
+# "Claude: cloud" is deliberately absent: bare "cloud" is a real word in tech
+# lectures, and a standing entry would mark every mention of cloud computing.
+# When a talk uses "cloud" to mean the model, propose it per-run in the
+# corrections file instead — see the correction pass in the lecture-notes skill.
+Claude Code: quad code, Quad code, Quad Code, Squad code, Cloud Code, QuadCode, Quack Co, hot code, Clockwork, Clyde, cloud code
+Claude Cowork: Cowerk, Colab, Claude Colab, Claude Co-work, Cowork
+Anthropic: Enthropic
+Sonnet 3.5: sauna 3.5
+Boris Cherny: Cherney, Boris Cherney
+Cat Wu: Katwo
+Mahesh: Mahes
+Barry Zhang
+
+# --- people ----------------------------------------------------------------
+Andrej Karpathy: Andrew Carpet
+Anders Hejlsberg: Heilsberg
+Jarred Sumner: Jared Sumner
+Adam Wolff: Adam Wolf
+Kris Kowal: Chris Kowal
+Ross Lazerowitz: Ros Lazerowitz
+Azalia Mirhoseini: Azalea
+Kian Katanforoosh: Keon
+Graham Neubig
+swyx: Swix
+Erik Schluntz
+
+# --- terms of art ----------------------------------------------------------
+best-of-N: best of end
+cold-start: code start, cold start problem
+tool description: two description
+tool execution: two execution
+leap of faith: lethal phase
+user-assistant turns: user assistant terms
+cost and latency: cause and latency
+budget-aware: budget aare
+multi-agent: multi- aent
+agentic: agenetic, authentic AI, agenetic AI
+rubric: Rubrik
+hillclimb: to help climate
+constitutional: compositional principles
+cache the trajectory: catch the trajectory
+PRD: a pure D
+TUI: the 2E part
+
+# --- tools and benchmarks --------------------------------------------------
+MCP: MCB, MCB protocol, MC client
+promptfoo: Prompt Food
+Aider: Ada
+BLEU: BLUE
+GPT-4o: GP 4.0
+All Hands AI: All Hand AI
+OpenDevin: Open Devon
+InterCode: inter code
+HumanEval: HumanEvel
+SWE-bench: SWEBench Plus
+CodeMonkeys: Code Monks
+statsig.com: static.com
+
+# --- numbers, which are never guessed at ------------------------------------
+# youtube-transcript-notes will not propose a correction that changes a digit, so these have to
+# be named. Only add one after checking the audio: "20 bucks" is a real thing
+# somebody might say.
+# 20 bugs: 20 bucks

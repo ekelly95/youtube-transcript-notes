@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# This project does not use uv, and its dependencies are floors rather than
+# pins on purpose. A lock file here is something another tool left behind, not
+# a decision — ignored so it cannot be committed by accident.
+uv.lock
+
+# Rendered study notes. Output, not source — and the text in them belongs to
+# whoever gave the lecture, which is the same reason tests/ stays out of the
+# sdist.
+notes/
+
+# Whole-repo dumps for feeding to a model. Regenerated on demand, never source.
+repomix-output*.xml
+
+# Per-machine defaults for the shipped skills — private paths and personal
+# post-steps. The SKILL.md files say to read this when it exists.
+.claude/skills/*/LOCAL.md
+.agents/skills/*/LOCAL.md

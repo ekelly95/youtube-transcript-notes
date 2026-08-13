@@ -1,0 +1,16 @@
+version: 2
+
+# Keep commit-pinned GitHub Actions current. Runtime dependencies use floors,
+# and the live canary checks yt-dlp compatibility directly.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Let a new action release sit for a week before proposing it.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "CI"
+    labels:
+      - dependencies

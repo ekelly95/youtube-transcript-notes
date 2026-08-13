@@ -1,0 +1,136 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-transcript-notes"
+# Keep package metadata and `--version` on one source of truth.
+dynamic = ["version"]
+description = "Turn lecture videos into readable, citable study material."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["lecture", "transcript", "captions", "citation", "study-notes"]
+dependencies = []
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Education",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/ekelly95/youtube-transcript-notes"
+Repository = "https://github.com/ekelly95/youtube-transcript-notes"
+Issues = "https://github.com/ekelly95/youtube-transcript-notes/issues"
+
+[project.optional-dependencies]
+# Acquisition stays optional so parsing and rendering have no third-party
+# dependencies. Keep yt-dlp floor-only: upgrading is the normal repair after a
+# YouTube change; `_require_shape` and the live canary check compatibility.
+youtube = ["yt-dlp>=2024.1.1"]
+dev = ["pytest>=8.3", "coverage>=7.6", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+youtube-transcript-notes = "youtube_transcript_notes.__main__:main"
+
+[tool.hatch.version]
+path = "src/youtube_transcript_notes/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_transcript_notes"]
+
+[tool.hatch.build.targets.sdist]
+# Tests contain CC BY-NC-SA caption fixtures and must not enter the MIT package.
+#
+# The contributor and agent files stay out too. They are repo-local instructions
+# — `AGENTS.md` and `CLAUDE.md` are byte twins, so shipping one and not the
+# other picks a vendor for no reason, and none of the three tells someone who
+# installed the package anything they can act on.
+include = [
+    "/src",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Keep list form so marker arguments behave identically on Windows and Unix.
+# `network` is also used to test the guard itself, so exclude only `canary`.
+addopts = ["--strict-markers", "--strict-config", "-m", "not canary"]
+markers = [
+    "network: test may open a real network connection (rare; the suite otherwise runs entirely from captured fixtures)",
+    "canary: live check that the yt-dlp seam still fits YouTube. Opt in with `pytest -m canary`",
+]
+
+[tool.ruff]
+src = ["src", "tests"]
+target-version = "py310"
+
+[tool.ruff.lint]
+# Pin the rule set so a Ruff upgrade does not silently redefine the gate.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "ISC",  # implicit string concatenation
+    "RUF",  # ruff-specific
+]
+
+[tool.mypy]
+# The package ships `py.typed`, so anything installing it type-checks against
+# these annotations. Strict is the only setting that makes that marker a
+# promise rather than a claim: without it the checker agrees with whatever is
+# written, including nothing at all.
+#
+# `src` only. Nothing installs the tests, so their annotations are a promise to
+# nobody, and the shortcuts they take deliberately — a `TrackHandle` holding no
+# provider because nothing will fetch it, a stub standing in for a response —
+# are the point of a test rather than a defect in one. They cannot be given a
+# relaxed profile either: a `module` override needs a package name, and
+# `tests/` has no `__init__.py` because `conftest` is imported by name.
+files = ["src"]
+python_version = "3.10"
+strict = true
+
+[[tool.mypy.overrides]]
+# yt-dlp ships no type information. Its results are `Any` by necessity, which
+# is why `_require_shape` checks the shape at runtime instead — see the `Info`
+# alias in `sources/youtube.py`.
+module = ["yt_dlp.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["youtube_transcript_notes"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# The dispatch shim is verified as a subprocess instead of in-process coverage.
+omit = ["*/__main__.py"]
+fail_under = 100
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+    "if __name__ == .__main__.:",
+]

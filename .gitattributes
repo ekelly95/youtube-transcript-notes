@@ -1,0 +1,12 @@
+# Normalise to LF in the repository regardless of the checkout platform.
+#
+# Developed on Windows with core.autocrlf=true, which would otherwise rewrite
+# line endings per-platform and make every file — including the frozen caption
+# fixtures — show as wholly modified on a fresh clone. The parsers fold \r\n and
+# bare \r to \n themselves (parse/base.py), so nothing depends on which ending
+# reaches the working copy.
+* text=auto eol=lf
+
+# Captured payloads, replayed verbatim forever. Diffing them is noise, and
+# nothing here should ever "fix" their line endings in place.
+tests/fixtures/** -diff
