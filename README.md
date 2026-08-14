@@ -13,7 +13,29 @@ speech recognition.
 
 ## Quick start
 
-Python 3.10 or newer.
+Python 3.10 or newer. There are two ways in, depending on whether you want the
+agent workflow or only the command-line tool.
+
+### Install the command-line tool
+
+```bash
+pipx install "youtube-transcript-notes[youtube]"
+```
+
+The `[youtube]` part brings in [yt-dlp](https://github.com/yt-dlp/yt-dlp), which
+is what fetches captions. Without it the tool installs and runs but cannot reach
+YouTube. `pip install "youtube-transcript-notes[youtube]"` into a virtual
+environment does the same job.
+
+```bash
+youtube-transcript-notes \
+  "https://www.youtube.com/watch?v=HtSuA80QTyo" --out notes/
+```
+
+### Or clone it, for Claude Code and Codex
+
+The bundled skills and the `names.txt` glossary are repository files rather than
+part of the installed package, so the agent workflow starts from a clone:
 
 ```bash
 git clone https://github.com/ekelly95/youtube-transcript-notes.git
@@ -41,14 +63,7 @@ Claude Code reads `.claude/skills/`; Codex reads the identical workflow from
 `.agents/skills/`. To set a personal output folder or post-processing step,
 create a gitignored `LOCAL.md` beside the relevant `SKILL.md`.
 
-To use the CLI directly:
-
-```bash
-.venv/Scripts/python -m youtube_transcript_notes \
-  "https://www.youtube.com/watch?v=HtSuA80QTyo" --out notes/
-```
-
-The result is ordinary Markdown:
+Either way, the result is ordinary Markdown:
 
 ```markdown
 # Lecture 1: Algorithmic Thinking, Peak Finding
@@ -93,8 +108,9 @@ folder. Multiple sources are allowed; one failure does not discard the rest.
 A caption file has no video to link to, so its timestamps are plain positions
 rather than links.
 
-Useful examples, run with the venv's `python` (`.venv/Scripts/python` or
-`.venv/bin/python`, as in Quick start):
+Useful examples. An installed copy is called as `youtube-transcript-notes`; from
+a clone, run them with the venv's `python` (`.venv/Scripts/python` or
+`.venv/bin/python`, as in Quick start). The two are the same program.
 
 ```bash
 # See available tracks without downloading caption payloads
@@ -158,6 +174,11 @@ Andrej Karpathy: Andrew Carpet
 ```bash
 python -m youtube_transcript_notes <source> --glossary names.txt
 ```
+
+The repository carries a starter list at
+[`names.txt`](https://github.com/ekelly95/youtube-transcript-notes/blob/main/names.txt).
+It is entirely agent-engineering vocabulary, so on a lecture from another field
+it is a template rather than a list. An installed copy does not include it.
 
 `--corrections found.json` accepts a list of `wrong`, `right`, and optional
 `evidence` fields. Corrections appear as `quad code [Claude Code]` and in an

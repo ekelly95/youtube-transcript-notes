@@ -6,6 +6,22 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## 0.3.0
+
+First release on PyPI: `pipx install "youtube-transcript-notes[youtube]"`.
+
+- Names the missing-transport failure `TRANSPORT_NOT_INSTALLED` rather than
+  reporting it as an unclassified acquisition failure, whose advice — retry, and
+  check the transport is up to date — was advice about a package that is not
+  installed. The remedy now also covers pipx installations, where a plain
+  `pip install` reaches a different environment and changes nothing.
+- Documents both ways in: the packaged command-line tool, and the clone that
+  carries the Claude Code and Codex skills and the `names.txt` glossary. Neither
+  of those is part of the distribution, so `pipx install` gives the tool without
+  the agent workflow.
+
+Nothing changes in the notes, citations, or transcripts the tool produces.
+
 ## 0.2.0
 
 Initial public release, developed privately under the name Lectern.

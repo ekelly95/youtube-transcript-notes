@@ -26,6 +26,7 @@ from .errors import (
     TrackNotFound,
     TranscriptError,
     TransportContractChanged,
+    TransportNotInstalled,
     UnknownCaptionFormat,
     UnknownProvider,
     UnknownRenderer,
@@ -53,7 +54,7 @@ from .render import Renderer, get_renderer, renderers
 from .resolve import Track, TrackHandle, TrackManifest
 from .sources import Expansion, SourceProvider, get_provider, provider_for, providers
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -98,6 +99,7 @@ __all__ = [
     "TranscriptError",
     "TranscriptFetcher",
     "TransportContractChanged",
+    "TransportNotInstalled",
     "TrustTier",
     "UnknownCaptionFormat",
     "UnknownProvider",

@@ -45,6 +45,7 @@ from ..errors import (
     SourceError,
     TranscriptError,
     TransportContractChanged,
+    TransportNotInstalled,
 )
 from ..limits import MAX_PAYLOAD_BYTES, MAX_PLAYLIST_ITEMS, describe_size
 from ..models import Chapter, LectureMeta, TrustTier
@@ -1053,13 +1054,7 @@ def _youtube_dl(flat: bool = False) -> Any:
     try:
         from yt_dlp import YoutubeDL
     except ImportError as error:  # pragma: no cover - depends on install extras
-        raise AcquisitionFailed(
-            source="youtube",
-            detail=(
-                "yt-dlp is not installed. "
-                "Install it with: pip install 'youtube-transcript-notes[youtube]'"
-            ),
-        ) from error
+        raise TransportNotInstalled(source="youtube") from error
 
     options: dict[str, Any] = {
         "quiet": True,

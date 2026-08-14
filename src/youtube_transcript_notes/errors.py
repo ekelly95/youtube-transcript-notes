@@ -50,6 +50,7 @@ __all__ = [
     "TrackNotFound",
     "TranscriptError",
     "TransportContractChanged",
+    "TransportNotInstalled",
     "UnknownCaptionFormat",
     "UnknownProvider",
     "UnknownRenderer",
@@ -299,6 +300,36 @@ class TransportContractChanged(SourceError):
         (
             "Check the seam directly: pytest -m canary, from a clone. It says "
             "whether the transport or the lecture is at fault."
+        ),
+    )
+
+
+class TransportNotInstalled(SourceError):
+    """The optional YouTube transport is not installed.
+
+    Kept apart from `AcquisitionFailed` because nothing here is a transport
+    *failure*: no network was reached, retrying will never help, and the
+    fallback's advice — retry, check the transport is current — is advice
+    about a package that is not there.
+
+    Two remedies rather than one, because they are not interchangeable. pipx
+    gives a tool its own environment, so `pip install` typed at a shell
+    succeeds against a different environment entirely and changes nothing the
+    tool can see — leaving the same error and no apparent reason for it.
+    """
+
+    CODE = "TRANSPORT_NOT_INSTALLED"
+    CAUSE = (
+        "Retrieving captions from YouTube needs yt-dlp, which is not installed. "
+        "It is optional so that caption files, corrections and rendering need "
+        "nothing from outside the standard library."
+    )
+    TRY = (
+        "pip install 'youtube-transcript-notes[youtube]'",
+        (
+            "If you installed this with pipx, the tool has its own environment "
+            "and pip will not reach it: "
+            "pipx inject youtube-transcript-notes yt-dlp"
         ),
     )
 
