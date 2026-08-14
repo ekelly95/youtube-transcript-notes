@@ -5,8 +5,9 @@ folder. The tests enforce these contracts; update the tests and this guide when
 a contract changes.
 
 `CLAUDE.md` and `AGENTS.md` are byte-identical, as is each skill under
-`.claude/skills/` with its `.agents/skills/` twin. Edit one side, copy it over
-the other, and verify with `cmp`.
+`.claude/skills/` with its `.agents/skills/` twin. Edit one side and copy it
+over the other; `tests/test_harness.py` fails on any drift, including a mirror
+left behind after its original was removed.
 
 ## Product contracts
 
