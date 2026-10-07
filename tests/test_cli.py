@@ -7,11 +7,12 @@ stdout, which is the entire point of having `run` return its output.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from conftest import CAPTIONS, FIXTURES, load_caption
+from conftest import CAPTIONS, FIXTURES, load_caption, without_frontmatter
 from youtube_transcript_notes import cli
 from youtube_transcript_notes.cli import EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, main, run
 from youtube_transcript_notes.errors import AcquisitionFailed
@@ -27,18 +28,18 @@ class TestOutput:
     ) -> None:
         result = run([SOURCE])
 
-        assert result.text.startswith("# mit6006-lec1")
+        assert without_frontmatter(result.text).startswith("# mit6006-lec1")
         assert result.exit_code == EXIT_OK
         assert capsys.readouterr().out == ""
 
     def test_markdown_is_the_default(self) -> None:
-        assert run([SOURCE]).text.startswith("#")
+        assert without_frontmatter(run([SOURCE]).text).startswith("#")
 
     @pytest.mark.parametrize(
         ("fmt", "check"),
         [
             ("plain", lambda t: not t.startswith("#")),
-            ("markdown", lambda t: t.startswith("# ")),
+            ("markdown", lambda t: without_frontmatter(t).startswith("# ")),
             ("citation", lambda t: "[Video]" in t),
             ("jsonl", lambda t: json.loads(t.splitlines()[0])["source_id"]),
         ],
@@ -607,7 +608,8 @@ class TestServedFromCacheIsAnnounced:
         result = run([LECTURE, "--cache", str(tmp_path)])
 
         assert result.exit_code == EXIT_OK
-        assert result.text.startswith("# Lecture 1: Algorithmic Thinking")
+        notes = without_frontmatter(result.text)
+        assert notes.startswith("# Lecture 1: Algorithmic Thinking")
         assert "served from cache" in result.report
         assert "the transport is down" in result.report
 
@@ -659,7 +661,7 @@ class TestJsonEnvelope:
 
         assert payload["ok"] is True
         assert payload["errors"] == []
-        assert payload["results"][0].startswith("# mit6006-lec1")
+        assert without_frontmatter(payload["results"][0]).startswith("# mit6006-lec1")
 
     def test_failures_carry_machine_readable_remedies(self) -> None:
         result = run([MISSING, "--json"])
@@ -699,12 +701,116 @@ def _remote_identity(monkeypatch: pytest.MonkeyPatch, identity: dict[str, str]) 
 
     def named_from_upstream(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         lecture = real(self, *args, **kwargs)
-        meta = LectureMeta(source_id=identity["source_id"], title=identity["title"])
-        return type(lecture)(
-            meta=meta, sections=lecture.sections, provenance=lecture.provenance
+        meta = LectureMeta(
+            source_id=identity["source_id"],
+            title=identity["title"],
+            url=identity.get("url"),
         )
+        return replace(lecture, meta=meta)
 
     monkeypatch.setattr(TrackHandle, "fetch", named_from_upstream)
+
+
+#: A remote video, as `_remote_identity` serves it.
+VIDEO = {
+    "title": "Lecture 1",
+    "source_id": "vid1",
+    "url": "https://www.youtube.com/watch?v=vid1",
+}
+
+#: What this tool wrote, in another tool's name or for another video.
+GENERATED = 'generator: "youtube-transcript-notes 0.4.0"'
+
+
+class TestRegeneratingItsOwnNotes:
+    """A note this tool wrote for a video may be re-rendered without --force —
+    the corrections rerun, an upgrade — while anything else stays refused."""
+
+    VIDEO = VIDEO
+    NAME = "Lecture 1 (vid1).md"
+
+    @staticmethod
+    def _corrections(tmp_path: Path) -> str:
+        table = tmp_path / "found.json"
+        table.write_text(
+            json.dumps([{"wrong": "Erik Domane", "right": "Erik Demaine"}]),
+            encoding="utf-8",
+        )
+        return str(table)
+
+    def test_a_corrected_rerun_updates_the_note_without_force(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        notes = tmp_path / "notes"
+        assert main([SOURCE, "--out", str(notes)]) == EXIT_OK
+        capsys.readouterr()
+
+        code = main(
+            [SOURCE, "--out", str(notes), "--corrections", self._corrections(tmp_path)]
+        )
+
+        assert code == EXIT_OK
+        assert capsys.readouterr().out.startswith("updated ")
+        assert "Erik Domane [Erik Demaine]" in (notes / self.NAME).read_text(
+            encoding="utf-8"
+        )
+
+    def test_a_hand_written_file_at_that_name_is_still_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        mine = tmp_path / self.NAME
+        mine.write_text("# Lecture 1\n\nmy own notes\n", encoding="utf-8")
+
+        assert main([SOURCE, "--out", str(tmp_path)]) == EXIT_FAILED
+        assert mine.read_text(encoding="utf-8") == "# Lecture 1\n\nmy own notes\n"
+
+    @pytest.mark.parametrize(
+        "claim",
+        [
+            # This tool, but another video.
+            f'---\nsource_id: "vid2"\n{GENERATED}\n---\n',
+            # The same video, but somebody else's tool.
+            '---\nsource_id: "vid1"\ngenerator: "another-tool 1.0"\n---\n',
+            # A block that never closes is not frontmatter.
+            f'---\nsource_id: "vid1"\n{GENERATED}\n',
+        ],
+    )
+    def test_only_its_own_note_for_the_same_video_is_replaced(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, claim: str
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        other = tmp_path / self.NAME
+        other.write_text(claim + "\nkept\n", encoding="utf-8")
+
+        assert main([SOURCE, "--out", str(tmp_path)]) == EXIT_FAILED
+        assert other.read_text(encoding="utf-8") == claim + "\nkept\n"
+
+    def test_something_unreadable_in_the_way_is_still_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        (tmp_path / self.NAME).write_bytes(b"\xff\xfe\x00binary")
+
+        assert main([SOURCE, "--out", str(tmp_path)]) == EXIT_FAILED
+
+    def test_local_files_never_qualify(self, tmp_path: Path) -> None:
+        """A stem like `lecture` recurs across folders, so it proves nothing
+        about which recording a note came from."""
+        assert main([SOURCE, "--out", str(tmp_path)]) == EXIT_OK
+
+        code = main(
+            [
+                SOURCE,
+                "--out",
+                str(tmp_path),
+                "--corrections",
+                self._corrections(tmp_path),
+            ]
+        )
+
+        assert code == EXIT_FAILED
 
 
 class TestWritingFiles:
@@ -714,18 +820,15 @@ class TestWritingFiles:
         result = run([SOURCE, "--out", str(target)])
 
         assert [output.path.name for output in result.files] == ["mit6006-lec1.md"]
-        assert result.files[0].text.startswith("# mit6006-lec1")
+        assert without_frontmatter(result.files[0].text).startswith("# mit6006-lec1")
         assert not target.exists()
 
     def test_main_writes_the_files(self, tmp_path: Path) -> None:
         target = tmp_path / "vault"
 
         assert main([SOURCE, "--out", str(target)]) == EXIT_OK
-        assert (
-            (target / "mit6006-lec1.md")
-            .read_text(encoding="utf-8")
-            .startswith("# mit6006-lec1")
-        )
+        written = (target / "mit6006-lec1.md").read_text(encoding="utf-8")
+        assert without_frontmatter(written).startswith("# mit6006-lec1")
 
     def test_the_extension_comes_from_the_renderer(self, tmp_path: Path) -> None:
         for fmt, extension in [("plain", "txt"), ("jsonl", "jsonl"), ("md", "md")]:
@@ -777,7 +880,8 @@ class TestWritingFiles:
         mine.write_text("notes I wrote myself", encoding="utf-8")
 
         assert main([SOURCE, "--out", str(tmp_path), "--force"]) == EXIT_OK
-        assert mine.read_text(encoding="utf-8").startswith("# mit6006-lec1")
+        replaced = mine.read_text(encoding="utf-8")
+        assert without_frontmatter(replaced).startswith("# mit6006-lec1")
 
     def test_a_refusal_leaves_no_litter_behind(self, tmp_path: Path) -> None:
         """The claim is taken with O_EXCL and released on failure, so a refused
@@ -1066,7 +1170,7 @@ class TestWritingFiles:
         payload = json.loads(run([SOURCE, "--json"]).text)
 
         assert payload["files"] == []
-        assert payload["results"][0].startswith("# mit6006-lec1")
+        assert without_frontmatter(payload["results"][0]).startswith("# mit6006-lec1")
 
 
 class TestBatchedOutput:
@@ -1106,7 +1210,8 @@ class TestEntryPoint:
         code = main([SOURCE])
 
         assert code == EXIT_OK
-        assert capsys.readouterr().out.startswith("# mit6006-lec1")
+        out = capsys.readouterr().out
+        assert without_frontmatter(out).startswith("# mit6006-lec1")
 
     def test_main_reports_failure_on_stderr(
         self, capsys: pytest.CaptureFixture

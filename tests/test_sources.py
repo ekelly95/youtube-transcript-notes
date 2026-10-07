@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import CAPTIONS
+from conftest import CAPTIONS, without_frontmatter
 from youtube_transcript_notes import TranscriptFetcher
 from youtube_transcript_notes.errors import (
     EmptyTranscript,
@@ -678,7 +678,7 @@ class TestEndToEnd:
         lecture = fetcher.fetch(str(CAPTIONS))
         notes = get_renderer("markdown").render(lecture)
 
-        assert notes.startswith("# mit6006-lec1")
+        assert without_frontmatter(notes).startswith("# mit6006-lec1")
         assert "**[0:00]**" in notes
         assert "Creative Commons license" in notes
         assert len(lecture.passages) == MANUAL_PASSAGES

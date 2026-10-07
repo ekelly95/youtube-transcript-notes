@@ -1,5 +1,6 @@
 """youtube-transcript-notes — lecture videos to readable, citable study notes."""
 
+from ._version import __version__
 from .api import TranscriptFetcher
 from .errors import (
     AcquisitionFailed,
@@ -55,8 +56,6 @@ from .registry import Registry
 from .render import Renderer, get_renderer, renderers
 from .resolve import Track, TrackHandle, TrackManifest
 from .sources import Expansion, SourceProvider, get_provider, provider_for, providers
-
-__version__ = "0.3.0"
 
 __all__ = [
     "SCHEMA_VERSION",

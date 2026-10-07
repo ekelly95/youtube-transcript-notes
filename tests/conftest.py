@@ -43,6 +43,13 @@ def load_synthetic(name: str) -> str:
     return (SYNTHETIC / name).read_text(encoding="utf-8")
 
 
+def without_frontmatter(markdown: str) -> str:
+    """A Markdown note minus its frontmatter block, to assert on the note itself."""
+    if not markdown.startswith("---\n"):
+        return markdown
+    return markdown.split("\n---\n", 1)[1].lstrip("\n")
+
+
 @pytest.fixture(autouse=True)
 def block_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
     """Fail any test that opens a network connection.

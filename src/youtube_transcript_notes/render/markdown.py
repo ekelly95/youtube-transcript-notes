@@ -1,13 +1,17 @@
 """Markdown notes with a timestamp on every paragraph — the default output.
 
-Any sentence can be traced back to the moment it was said, in one click.
+Any sentence can be traced back to the moment it was said, in one click. A
+YAML frontmatter block carries the citation fields for notes apps (Obsidian
+properties, Dataview) and lets the CLI recognise a note it wrote itself.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Sequence
 
+from .._version import __version__
 from ..models import (
     Correction,
     Lecture,
@@ -20,7 +24,10 @@ from ..models import (
 from .base import Renderer, renderers
 from .escape import body, body_resumed, label, safe_url
 
-__all__ = ["MarkdownRenderer"]
+__all__ = ["GENERATOR", "MarkdownRenderer", "read_frontmatter"]
+
+#: How a note names the tool that wrote it, in its `generator` field.
+GENERATOR = "youtube-transcript-notes"
 
 
 @renderers.register("markdown", "md")
@@ -30,8 +37,9 @@ class MarkdownRenderer(Renderer):
     extension = "md"
 
     def render(self, lecture: Lecture) -> str:
+        lines = _frontmatter(lecture)
         # Every interpolation is `label`d or `body`d: it is the uploader's text.
-        lines = [f"# {label(lecture.meta.title)}", ""]
+        lines += [f"# {label(lecture.meta.title)}", ""]
         lines += [_byline(lecture.meta, lecture.provenance), ""]
 
         marker = _marker(lecture.corrections)
@@ -46,6 +54,79 @@ class MarkdownRenderer(Renderer):
 
         lines += _corrections(lecture.corrections)
         return "\n".join(lines).rstrip() + "\n"
+
+
+def _frontmatter(lecture: Lecture) -> list[str]:
+    """The YAML block that opens a note.
+
+    Deterministic — no retrieval time — so a rerun is byte-identical and
+    reports `unchanged`. Absent fields are omitted rather than left empty.
+    """
+    meta, provenance = lecture.meta, lecture.provenance
+    fields = [("title", _scalar(meta.title)), ("source_id", _scalar(meta.source_id))]
+    url = safe_url(meta.url)
+    if url:
+        fields.append(("url", _scalar(url)))
+    if meta.channel:
+        fields.append(("channel", _scalar(meta.channel)))
+    if meta.published:
+        # Unquoted, so notes apps read it as a date rather than a string.
+        fields.append(("published", meta.published.isoformat()))
+    fields += [
+        ("tier", _scalar(provenance.tier.value)),
+        ("language", _scalar(provenance.language)),
+        ("generator", _scalar(f"{GENERATOR} {__version__}")),
+    ]
+    return ["---", *(f"{key}: {value}" for key, value in fields), "---", ""]
+
+
+#: Characters Markdown acts on, escaped inside frontmatter values too: a viewer
+#: that does not understand frontmatter renders the block as ordinary text.
+_ACTIVE_IN_FRONTMATTER = frozenset("<>[]`")
+
+
+def _scalar(value: str) -> str:
+    """A YAML double-quoted scalar that holds `value` exactly, whatever it is.
+
+    JSON strings are valid YAML double-quoted scalars, and `json.dumps` already
+    escapes quotes, backslashes and control characters, so an uploader's title
+    cannot close the string or the block. Anything YAML would not accept raw —
+    a line separator, a C1 control — and anything Markdown would act on is
+    escaped as well, so the block is inert even where it is not understood.
+    """
+    return "".join(_inert(char) for char in json.dumps(value, ensure_ascii=False))
+
+
+def _inert(char: str) -> str:
+    if char in _ACTIVE_IN_FRONTMATTER:
+        return "\\u" + format(ord(char), "04x")
+    if not char.isprintable():
+        return char.encode("unicode_escape").decode("ascii")
+    return char
+
+
+def read_frontmatter(text: str) -> dict[str, str]:
+    """The quoted string fields of a note's frontmatter, as `_frontmatter` wrote them.
+
+    Not a YAML parser: it reads back this renderer's own output and ignores
+    everything else, which is all the CLI's overwrite guard needs. An opening
+    ``---`` that is never closed is not a frontmatter block.
+    """
+    lines = text.split("\n")
+    if lines[0] != "---":
+        return {}
+
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        if line == "---":
+            return fields
+        key, separator, value = line.partition(": ")
+        if separator and value.startswith('"'):
+            try:
+                fields[key] = json.loads(value)
+            except ValueError:
+                continue
+    return {}
 
 
 def _marker(

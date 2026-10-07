@@ -18,7 +18,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -41,6 +41,7 @@ from .naming import filename_for
 from .redact import redact
 from .refine import Glossary, read_corrections, read_glossary
 from .render import Renderer, get_renderer, renderers
+from .render.markdown import GENERATOR, read_frontmatter
 from .resolve import TrackManifest
 
 __all__ = ["CliResult", "OutputFile", "main", "run"]
@@ -59,6 +60,13 @@ DEFAULT_DELAY = 1.0
 #: How the run waits between remote sources; the test suite replaces it.
 _pause = time.sleep
 
+#: What a write did: created or replaced (with --force), left identical, or
+#: replaced this tool's own earlier note for the same video.
+WROTE, UNCHANGED, UPDATED = "wrote", "unchanged", "updated"
+
+#: How much of a file in the way is read to find its frontmatter.
+_FRONTMATTER_PROBE = 4096
+
 
 @dataclass(frozen=True)
 class OutputFile:
@@ -68,8 +76,16 @@ class OutputFile:
     text: str
 
     overwrite: bool = False
-    """Whether this may replace a file already at `path`. False unless
+    """Whether this may replace any file already at `path`. False unless
     ``--force``, so a hand-built `OutputFile` is the safe one."""
+
+    source_id: str | None = None
+    """The video this note is for, when that identity is global.
+
+    A note this tool wrote earlier for the same id may be replaced without
+    ``--force``. Set only for sources with a URL: a YouTube id names one video
+    everywhere, while a local file's stem can recur in another folder.
+    """
 
 
 @dataclass(frozen=True)
@@ -224,7 +240,12 @@ class _Planner:
         meta = document.lecture.meta
         name = filename_for(meta.title, meta.source_id, self._extension, self._taken)
         self._taken.add(name.rsplit(".", 1)[0].casefold())
-        return OutputFile(self._directory / name, document.text, self._overwrite)
+        return OutputFile(
+            self._directory / name,
+            document.text,
+            self._overwrite,
+            source_id=meta.source_id if meta.url else None,
+        )
 
 
 class _Tally:
@@ -279,12 +300,13 @@ def _is_remote(fetcher: TranscriptFetcher, source: str) -> bool:
 def _present(
     decision: _Decision,
     problems: Sequence[tuple[str, TranscriptError]] = (),
-    unchanged: frozenset[str] = frozenset(),
+    states: Mapping[str, str] | None = None,
 ) -> CliResult:
     """Turn a decision, plus what became of its files, into what to say.
 
     Planned files decide the mode (a `--out` run reports filenames); written
     files decide the content, so a run whose writes all failed prints nothing.
+    `states` maps a path to what its write did, when that was not ``wrote``.
     """
     refused = {source for source, _ in problems}
     written = tuple(f for f in decision.files if str(f.path) not in refused)
@@ -301,7 +323,7 @@ def _present(
         )
 
     return CliResult(
-        text=_stdout(decision, written, unchanged),
+        text=_stdout(decision, written, states or {}),
         exit_code=code,
         files=decision.files,
         report=_report(trouble, decision.notices),
@@ -367,14 +389,13 @@ def _options(args: argparse.Namespace) -> dict[str, object]:
 def _stdout(
     decision: _Decision,
     written: Sequence[OutputFile],
-    unchanged: frozenset[str],
+    states: Mapping[str, str],
 ) -> str:
     if decision.listings:
         return "\n\n\n".join(decision.listings)
     if decision.files:
         return "\n".join(
-            f"{'unchanged' if str(output.path) in unchanged else 'wrote'} {output.path}"
-            for output in written
+            f"{states.get(str(output.path), WROTE)} {output.path}" for output in written
         )
     # The renderer's own separator: a blank line between JSONL documents is
     # not JSONL.
@@ -554,11 +575,10 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         "--force",
         action="store_true",
         help=(
-            "Replace files that are already there. Without it a lecture whose "
-            "file exists is refused by name and nothing is overwritten — "
-            "this tool keeps no record of which files are its own, so it cannot "
-            "tell last week's note from one you wrote yourself. A file that "
-            "already holds exactly this lecture is left as it is either way."
+            "Replace any file that is already there. Without it, a note this "
+            "tool wrote for the same YouTube video is updated and an identical "
+            "file is left alone, but anything else at that name — a note you "
+            "wrote, another video's — is refused and nothing is overwritten."
         ),
     )
     parser.add_argument(
@@ -654,18 +674,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     planner = _Planner(args.out, renderer.extension, args.force)
     tally = _Tally()
     problems: list[tuple[str, TranscriptError]] = []
-    unchanged: set[str] = set()
+    states: dict[str, str] = {}
     interrupted = False
 
     try:
         for outcome in _outcomes(args, renderer, announce=_announcer(args)):
             output = planner.plan(outcome.document)
             if output is not None:
-                problem, same = _write_one(output)
+                problem, state = _write_one(output)
                 if problem is not None:
                     problems.append((str(output.path), problem))
-                elif same:
-                    unchanged.add(str(output.path))
+                else:
+                    states[str(output.path)] = state
                 # On disk now; keep where it went, not the whole text.
                 output = replace(output, text="")
             tally.add(outcome, output)
@@ -673,7 +693,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         interrupted = True
 
     decision = tally.decision(renderer, args.json)
-    result = _present(decision, problems, frozenset(unchanged))
+    result = _present(decision, problems, states)
 
     if result.report:
         print(result.report, file=sys.stderr)
@@ -724,36 +744,63 @@ def _speak_utf8() -> None:
             reconfigure(encoding="utf-8")
 
 
-def _write_one(output: OutputFile) -> tuple[TranscriptError | None, bool]:
-    """Write one planned file: the problem if it was refused, and whether the
-    file already said exactly this.
+def _write_one(output: OutputFile) -> tuple[TranscriptError | None, str]:
+    """Write one planned file: the problem if it was refused, else what it did.
 
     A problem takes the shape of a failed fetch, so it reaches stderr, the JSON
     envelope and the exit code through the same machinery.
     """
     where = str(output.path)
     try:
-        return None, not _write(output)
+        return None, _write(output)
     except FileExistsError:
-        return OutputExists(path=where), False
+        return OutputExists(path=where), ""
     except OSError as error:
-        return OutputUnwritable(path=where, detail=error.strerror or str(error)), False
+        return OutputUnwritable(path=where, detail=error.strerror or str(error)), ""
     except Exception as error:
         # The last resort, as in `_outcomes`: one bad write costs one file.
         detail = redact(f"{type(error).__name__}: {error}")
-        return OutputUnwritable(path=where, detail=detail), False
+        return OutputUnwritable(path=where, detail=detail), ""
 
 
-def _write(output: OutputFile) -> bool:
-    """Write one document atomically. False if the file already said exactly this."""
+def _write(output: OutputFile) -> str:
+    """Write one document atomically, and say whether it was written, left
+    unchanged, or updated in place of this tool's own earlier note."""
     try:
         atomic_write(output.path, output.text, overwrite=output.overwrite)
-        return True
+        return WROTE
     except FileExistsError:
         # Identical content needs no `--force`: writing it changes nothing.
         if _already_says(output):
-            return False
+            return UNCHANGED
+        # Nor does this tool's own note for the same video: re-rendering it —
+        # with corrections, or after an upgrade — is the normal case.
+        if _is_own_note(output):
+            atomic_write(output.path, output.text, overwrite=True)
+            return UPDATED
         raise
+
+
+def _is_own_note(output: OutputFile) -> bool:
+    """Whether the file in the way is this tool's note for the same video.
+
+    Read from its frontmatter, which names the generator and the source id.
+    Check-then-replace, like `_already_says`: a file swapped in between is a
+    narrow race, and the worst case replaces a note claiming to be this one.
+    """
+    if output.source_id is None:
+        return False
+    try:
+        with output.path.open(encoding="utf-8") as handle:
+            head = handle.read(_FRONTMATTER_PROBE)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    fields = read_frontmatter(head)
+    return (
+        fields.get("generator", "").startswith(f"{GENERATOR} ")
+        and fields.get("source_id") == output.source_id
+    )
 
 
 def _already_says(output: OutputFile) -> bool:

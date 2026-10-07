@@ -199,9 +199,19 @@ Remote output names include the source ID, such as
 `Peak Finding (HtSuA80QTyo).md`. This prevents a video title from claiming an
 unrelated note. Local files keep their stem.
 
+Markdown notes open with YAML frontmatter — title, source ID, URL, channel,
+publication date, caption tier and language — which Obsidian shows as
+properties and Dataview can query. Every value is quoted and escaped, so a
+hostile title stays inert.
+
 If the chosen name already contains identical output, the run reports
-`unchanged`. Different content is refused unless `--force` is given. A title
-changed upstream creates a new file and leaves the old one alone.
+`unchanged`. If it holds this tool's own note for the same YouTube video (its
+frontmatter says so), the note is re-rendered and reported as `updated` — this
+is how a corrections pass or an upgrade refreshes a note. Anything else is
+refused unless `--force` is given: a note you wrote, another video's note, or
+any local-file note, because a filename stem is not a unique identity. Notes
+written before 0.4.0 have no frontmatter, so refresh those once with `--force`.
+A title changed upstream creates a new file and leaves the old one alone.
 
 The default cache is:
 
