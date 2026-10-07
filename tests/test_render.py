@@ -135,6 +135,70 @@ class TestMarkdown:
         ).render(lecture)
 
 
+def _chapterless(base: Lecture, minutes: int, every: int = 60, url: str | None = None):
+    """A lecture with no chapters: one untitled section, a passage per `every` s."""
+    passages = tuple(
+        Passage(text=f"Passage at {start}.", start=float(start), end=start + 30.0)
+        for start in range(0, minutes * 60, every)
+    )
+    return replace(
+        base,
+        meta=replace(base.meta, url=url, chapters=()),
+        sections=(Section(title=None, start=0.0, passages=passages),),
+    )
+
+
+class TestTimeHeadings:
+    """A long transcript with no chapters gets a heading every ten minutes —
+    timestamps only, never an invented topic."""
+
+    @staticmethod
+    def _headings(output: str) -> list[str]:
+        return [line for line in output.splitlines() if line.startswith("## ")]
+
+    def test_a_long_chapterless_transcript_gets_one_every_ten_minutes(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        output = get_renderer("markdown").render(_chapterless(minimal_lecture, 45))
+
+        assert self._headings(output) == [
+            "## 0:00",
+            "## 10:00",
+            "## 20:00",
+            "## 30:00",
+            "## 40:00",
+        ]
+        # Each heading sits directly above the passage it names.
+        assert "## 10:00\n\n**[10:00]** Passage at 600." in output
+
+    def test_headings_link_when_the_source_does(self, minimal_lecture: Lecture) -> None:
+        lecture = _chapterless(minimal_lecture, 25, url=FULL_URL)
+        headings = self._headings(get_renderer("markdown").render(lecture))
+
+        assert headings[1] == f"## [10:00]({FULL_URL}&t=600)"
+
+    def test_a_gap_moves_the_heading_to_the_next_passage_without_repeats(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        """Passages every seven minutes: boundaries fall between them."""
+        lecture = _chapterless(minimal_lecture, 40, every=420)
+        headings = self._headings(get_renderer("markdown").render(lecture))
+
+        assert headings == ["## 0:00", "## 14:00", "## 21:00", "## 35:00"]
+
+    def test_a_short_transcript_reads_whole(self, minimal_lecture: Lecture) -> None:
+        output = get_renderer("markdown").render(_chapterless(minimal_lecture, 19))
+
+        assert self._headings(output) == []
+
+    def test_published_chapters_are_never_mixed_with_time_headings(
+        self, full_lecture: Lecture
+    ) -> None:
+        headings = self._headings(get_renderer("markdown").render(full_lecture))
+
+        assert headings == ["## Memoisation", "## Bottom-up tables"]
+
+
 class TestFrontmatter:
     """Citation fields for notes apps, and the CLI's proof of authorship."""
 

@@ -86,7 +86,8 @@ Srini Devadas. I'm a professor of electrical engineering and computer science…
 - Reassembles caption fragments into readable paragraphs that begin at sentence
   boundaries.
 - Keeps paragraph timestamps, title, channel, publication date, chapters, and
-  retrieval provenance.
+  retrieval provenance. A long video without chapters gets a timestamp heading
+  every ten minutes, so the note still has an outline.
 - Prefers human-written captions and identifies automatic or translated tracks.
 - Interprets common speaker and non-speech annotations without inventing
   speakers.

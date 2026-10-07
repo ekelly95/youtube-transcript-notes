@@ -29,6 +29,12 @@ __all__ = ["GENERATOR", "MarkdownRenderer", "read_frontmatter"]
 #: How a note names the tool that wrote it, in its `generator` field.
 GENERATOR = "youtube-transcript-notes"
 
+#: Without published chapters, a heading every this many seconds...
+_TIME_HEADING_SECONDS = 600
+
+#: ...once the transcript runs at least this long. Shorter ones read fine whole.
+_TIME_HEADING_MIN_SPAN = 1200
+
 
 @renderers.register("markdown", "md")
 class MarkdownRenderer(Renderer):
@@ -45,15 +51,44 @@ class MarkdownRenderer(Renderer):
         marker = _marker(lecture.corrections)
         # Speaker labels are single-line, so they escape with `label`.
         named = _marker(lecture.corrections, escape=label, resume=label)
+        timed = _wants_time_headings(lecture)
+        next_heading = 0.0
         for section in lecture.sections:
             if section.title:
                 lines += [f"## {label(section.title)}", ""]
             for passage in section.passages:
-                stamp = _stamp(lecture.locator_for(passage, section))
+                locator = lecture.locator_for(passage, section)
+                if timed and passage.start >= next_heading:
+                    lines += [f"## {_heading_stamp(locator)}", ""]
+                    next_heading = _next_boundary(passage.start)
+                stamp = _stamp(locator)
                 lines += [f"{stamp}{_who(passage, named)} {marker(passage.text)}", ""]
 
         lines += _corrections(lecture.corrections)
         return "\n".join(lines).rstrip() + "\n"
+
+
+def _wants_time_headings(lecture: Lecture) -> bool:
+    """Whether a long transcript arrived with no chapters to structure it.
+
+    The headings are timestamps only: the tool states where it is, and never
+    invents what a stretch is about.
+    """
+    if len(lecture.sections) != 1 or lecture.sections[0].title is not None:
+        return False
+    section = lecture.sections[0]
+    return section.end - section.start >= _TIME_HEADING_MIN_SPAN
+
+
+def _next_boundary(moment: float) -> float:
+    """The first heading boundary strictly after `moment`."""
+    return (moment // _TIME_HEADING_SECONDS + 1) * _TIME_HEADING_SECONDS
+
+
+def _heading_stamp(locator: Locator) -> str:
+    """A timestamp heading, linked when the source supports deep links."""
+    url = safe_url(locator.url)
+    return f"[{locator.timestamp}]({url})" if url else locator.timestamp
 
 
 def _frontmatter(lecture: Lecture) -> list[str]:
