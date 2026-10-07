@@ -1193,7 +1193,7 @@ class TestTransportContract:
 
         assert remedy["code"] == "TRANSPORT_CONTRACT_CHANGED"
         assert remedy["context"]["version"]
-        assert any("pip install -U yt-dlp" in step for step in remedy["try"])
+        assert any('install -U "yt-dlp[default]"' in step for step in remedy["try"])
 
 
 class TestTransportBreakageIsNotTheLecturesFault:
@@ -1216,7 +1216,9 @@ class TestTransportBreakageIsNotTheLecturesFault:
         failure = _classify(VIDEO_ID, RuntimeError(message))
 
         assert isinstance(failure, TransportContractChanged)
-        assert any("pip install -U yt-dlp" in step for step in failure.remedy["try"])
+        assert any(
+            'install -U "yt-dlp[default]"' in step for step in failure.remedy["try"]
+        )
 
     def test_breakage_wins_over_a_message_that_looks_like_a_dead_video(self) -> None:
         """Order matters, and this is why it is written down.
@@ -1342,6 +1344,53 @@ class TestTransportIsBounded:
         assert params["socket_timeout"] > 0
         assert params["retries"] >= 1
         assert params["extractor_retries"] >= 1
+
+
+class TestJavaScriptRuntime:
+    """yt-dlp needs a JS runtime for YouTube since 2025.11.12, and only enables
+    Deno by default. Node is far more often installed already."""
+
+    def test_every_supported_runtime_is_enabled(self) -> None:
+        from youtube_transcript_notes.sources.youtube import _youtube_dl
+
+        runtimes = _youtube_dl().params["js_runtimes"]
+
+        assert {"deno", "node", "bun"} <= set(runtimes)
+
+    def test_no_hint_when_a_runtime_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from youtube_transcript_notes.sources import youtube
+
+        monkeypatch.setattr(
+            youtube.shutil,
+            "which",
+            lambda name: "/usr/bin/node" if name == "node" else None,
+        )
+        failure = _classify(VIDEO_ID, RuntimeError("nsig extraction failed"))
+
+        assert failure.also_try == ()
+        assert "JavaScript" not in str(failure)
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("nsig extraction failed", TransportContractChanged),
+            ("HTTP 503 from the CDN", AcquisitionFailed),
+        ],
+    )
+    def test_the_hint_appears_when_no_runtime_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch, message: str, expected: type
+    ) -> None:
+        from youtube_transcript_notes.sources import youtube
+
+        monkeypatch.setattr(youtube.shutil, "which", lambda name: None)
+        failure = _classify(VIDEO_ID, RuntimeError(message))
+
+        assert isinstance(failure, expected)
+        # Last, after the standing advice, in both the prose and the remedy.
+        assert "JavaScript runtime" in failure.remedy["try"][-1]
+        assert "Deno" in str(failure)
 
 
 class TestSurvivingAnOutage:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import re
+import shutil
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -90,6 +91,20 @@ _SOCKET_TIMEOUT = 30.0
 #: Retries for a transient failure. Small, because silent minutes of retrying
 #: look like a hang.
 _RETRIES = 2
+
+#: JavaScript runtimes yt-dlp may use to solve YouTube's challenges, in its own
+#: order of preference. yt-dlp enables only Deno by default; Node and Bun are
+#: as good, and far more often already installed.
+_JS_RUNTIMES = ("deno", "node", "bun")
+
+#: Said when no runtime is on PATH. yt-dlp has deprecated YouTube support
+#: without one (2025.11.12); captions still arrive today, but formats may not.
+_JS_RUNTIME_HINT = (
+    "No JavaScript runtime was found on PATH, and yt-dlp needs one for full "
+    "YouTube support. Install Deno "
+    "(https://docs.deno.com/runtime/getting_started/installation/) or Node.js "
+    "20 or newer, then retry."
+)
 
 #: Where caption tracks are read from. Absent means the contract moved;
 #: present and empty means the video has no captions.
@@ -407,9 +422,19 @@ def _yt_dlp_version() -> str:
         return "(not installed)"
 
 
+def _js_runtime_hint() -> tuple[str, ...]:
+    """The install hint, when no JavaScript runtime yt-dlp could use is on PATH."""
+    if any(shutil.which(runtime) for runtime in _JS_RUNTIMES):
+        return ()
+    return (_JS_RUNTIME_HINT,)
+
+
 def _contract_changed(source: str, detail: str) -> TransportContractChanged:
     return TransportContractChanged(
-        source=source, detail=detail, version=_yt_dlp_version()
+        source=source,
+        detail=detail,
+        version=_yt_dlp_version(),
+        also_try=_js_runtime_hint(),
     )
 
 
@@ -835,6 +860,7 @@ def _youtube_dl(flat: bool = False) -> Any:
         "socket_timeout": _SOCKET_TIMEOUT,
         "retries": _RETRIES,
         "extractor_retries": _RETRIES,
+        "js_runtimes": {runtime: {} for runtime in _JS_RUNTIMES},
     }
     if flat:
         # Name every video in one request without visiting any. `playlistend`
@@ -866,4 +892,4 @@ def _classify(source: str, error: Exception) -> SourceError:
         if phrase in lowered:
             return failure(source=source)
 
-    return AcquisitionFailed(source=source, detail=message)
+    return AcquisitionFailed(source=source, detail=message, also_try=_js_runtime_hint())

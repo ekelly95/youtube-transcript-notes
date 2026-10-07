@@ -24,7 +24,7 @@ failure in a different costume.
 
 Two ways to read a failure here:
 
-* `TransportContractChanged` — the seam moved. Try ``pip install -U yt-dlp``.
+* `TransportContractChanged` — the seam moved. Try ``pip install -U "yt-dlp[default]"``.
   If that does not fix it, `_require_shape` in ``sources/youtube.py`` names the
   key that went missing and that is where the repair goes.
 * Anything else — read the message. Age gates, region blocks and the lecture

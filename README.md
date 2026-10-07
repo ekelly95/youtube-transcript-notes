@@ -27,6 +27,11 @@ is what fetches captions. Without it the tool installs and runs but cannot reach
 YouTube. `pip install "youtube-transcript-notes[youtube]"` into a virtual
 environment does the same job.
 
+yt-dlp also wants a JavaScript runtime for full YouTube support. If you have
+neither [Deno](https://docs.deno.com/runtime/getting_started/installation/) nor
+Node.js 20+ installed, install one (on Windows, `winget install DenoLand.Deno`).
+The tool uses whichever it finds.
+
 ```bash
 youtube-transcript-notes \
   "https://www.youtube.com/watch?v=HtSuA80QTyo" --out notes/
@@ -253,11 +258,19 @@ These are reported as `TRANSPORT_CONTRACT_CHANGED` rather than as a problem
 with the lecture, because the lecture is usually fine:
 
 ```bash
-.venv/Scripts/python -m pip install -U yt-dlp
+.venv/Scripts/python -m pip install -U "yt-dlp[default]"
 ```
 
-If yt-dlp is already current, wait a day or two — this is the one dependency
-whose upstream breaks on somebody else's schedule.
+For a pipx install, `pipx runpip youtube-transcript-notes install -U
+"yt-dlp[default]"` reaches the tool's own environment. If yt-dlp is already
+current, wait a day or two — this is the one dependency whose upstream breaks
+on somebody else's schedule.
+
+**"No JavaScript runtime was found".** Since late 2025 yt-dlp solves YouTube's
+challenges with an external JavaScript runtime. Captions usually still arrive
+without one, but yt-dlp has deprecated that path. Install
+[Deno](https://docs.deno.com/runtime/getting_started/installation/) or Node.js
+20+; the tool enables Deno, Node and Bun, whichever is on `PATH`.
 
 **"has no caption tracks of any kind".** The tool reads captions; it does not
 create them. There is no audio download and no speech recognition, on purpose.

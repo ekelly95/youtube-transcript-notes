@@ -40,7 +40,8 @@ Issues = "https://github.com/ekelly95/youtube-transcript-notes/issues"
 # Acquisition stays optional so parsing and rendering have no third-party
 # dependencies. Keep yt-dlp floor-only: upgrading is the normal repair after a
 # YouTube change; `_require_shape` and the live canary check compatibility.
-youtube = ["yt-dlp>=2024.1.1"]
+# `[default]` brings yt-dlp-ejs, which YouTube extraction needs since 2025.11.12.
+youtube = ["yt-dlp[default]>=2025.11.12"]
 dev = ["pytest>=8.3", "coverage>=7.6", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]

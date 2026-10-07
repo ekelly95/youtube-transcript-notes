@@ -57,14 +57,17 @@ class TranscriptError(Exception):
         context passed to the constructor.
     ``TRY``
         Ordered suggestions for what to do next, most likely to work first.
+
+    ``also_try`` adds suggestions that depend on the situation, after ``TRY``.
     """
 
     CODE = "YOUTUBE_TRANSCRIPT_NOTES_ERROR"
     CAUSE = "Something went wrong that this tool does not have a specific name for."
     TRY: tuple[str, ...] = ()
 
-    def __init__(self, **context: Any) -> None:
+    def __init__(self, *, also_try: Sequence[str] = (), **context: Any) -> None:
         self.context = context
+        self.also_try = tuple(also_try)
         super().__init__()
 
     @property
@@ -73,19 +76,25 @@ class TranscriptError(Exception):
         return self.CAUSE.format(**self.context)
 
     @property
-    def remedy(self) -> dict[str, Any]:
-        """Machine-readable failure description.
+    def suggestions(self) -> tuple[str, ...]:
+        """Everything to try, in order: the standing advice, then the situational."""
+        return (*self.TRY, *self.also_try)
 
-        The shape is deliberately boring and stable: a code, an ordered list of
-        things to try, and the context that produced the failure.
-        """
-        return {"code": self.CODE, "try": list(self.TRY), "context": dict(self.context)}
+    @property
+    def remedy(self) -> dict[str, Any]:
+        """Machine-readable failure description: a stable code, an ordered list
+        of things to try, and the context that produced the failure."""
+        return {
+            "code": self.CODE,
+            "try": list(self.suggestions),
+            "context": dict(self.context),
+        }
 
     def __str__(self) -> str:
         parts = [self.cause]
-        if self.TRY:
-            suggestions = "\n".join(f"  - {suggestion}" for suggestion in self.TRY)
-            parts.append(f"What to try:\n{suggestions}")
+        if self.suggestions:
+            listed = "\n".join(f"  - {suggestion}" for suggestion in self.suggestions)
+            parts.append(f"What to try:\n{listed}")
         return "\n\n".join(parts)
 
 
@@ -251,7 +260,11 @@ class TransportContractChanged(SourceError):
         "— not a problem with {source!r}, which may be perfectly fine."
     )
     TRY = (
-        "Update the transport: pip install -U yt-dlp",
+        'Update the transport: pip install -U "yt-dlp[default]"',
+        (
+            "If you installed this with pipx: pipx runpip "
+            'youtube-transcript-notes install -U "yt-dlp[default]"'
+        ),
         (
             "If yt-dlp is already current, YouTube may have changed something "
             "it has not caught up with yet. Try again in a day or two."
