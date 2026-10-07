@@ -1,26 +1,14 @@
 """Where sentences end, and how to cut a cue on one.
 
-Caption cues break where a display line filled up, which has nothing to do with
-where a sentence ended. A cue routinely reads ``"...bring it to an end. Here
-are those ideas"`` — one sentence finishing and the next beginning, inside a
-single timed unit. Grouping such cues into paragraphs can therefore only ever
-start a paragraph mid-sentence, and the timestamp on that paragraph points at
-the tail of a thought rather than the head of one.
+A cue routinely holds the end of one sentence and the start of the next
+(``"...to an end. Here are those ideas"``). Cutting it there first makes every
+sentence boundary a cue boundary, so paragraphs — and their timestamps — can
+start where a thought starts.
 
-Cutting the cue first removes the problem at its source: after this stage every
-sentence boundary *is* a cue boundary, so the existing grouping rules can align
-paragraphs to sentences without knowing anything about sentences.
-
-The cut is only made where the source supplied word timings, because the second
-half needs a start and the only honest one is the timing of the word that opens
-it. Dividing a cue's duration by its word count would manufacture a number that
-later code could not tell from a measured one — the same reason `parse.json3`
-refuses to invent word timings for manual tracks.
-
-This module also owns `ends_sentence`, which `refine.reflow` uses as its
-paragraph gate. One definition on purpose: a splitter and a gate that disagreed
-about what a sentence ending looks like would cut in places the gate then
-refused to break on.
+Cuts are made only where the source supplied word timings: the second half's
+start must be a measured word time, never a share of the cue's duration.
+`ends_sentence` lives here too, so the splitter and reflow's paragraph gate
+share one definition.
 """
 
 from __future__ import annotations
@@ -34,18 +22,14 @@ __all__ = ["cut_at", "ends_sentence", "looks_punctuated", "split_at_sentences"]
 #: Characters that can end a sentence, ignoring any closing quote or bracket.
 _ENDINGS = (".", "?", "!")
 
-#: Closing punctuation that can sit after a full stop. The curly quotes are
-#: deliberate — transcripts of published captions use typographic quotes, and
-#: missing them would hide the sentence end underneath.
+#: Closing punctuation that can sit after a full stop, typographic quotes included.
 _TRAILING = "\"')]}»”’"  # noqa: RUF001
 
 #: Opening punctuation that can sit before the first letter of a sentence.
 _OPENING = "\"'([{«“‘"  # noqa: RUF001
 
-#: Words whose full stop ends the word rather than the sentence. Deliberately
-#: short: a missed abbreviation costs one paragraph break in the wrong place,
-#: while a missed *sentence* costs nothing at all, because the text simply
-#: stays as it is today.
+#: Words whose full stop ends the word rather than the sentence. Short on
+#: purpose: a missed abbreviation misplaces one paragraph break at worst.
 _ABBREVIATIONS = frozenset(
     {
         "e.g.",
@@ -68,13 +52,10 @@ _ABBREVIATIONS = frozenset(
 )
 
 #: Sentence endings per word, below which a track is treated as unpunctuated.
-#: The margin either side is enormous and the threshold is not delicate: the
-#: measured lecture's human captions run 0.069 and its automatic ones 0.0003,
-#: two orders of magnitude clear in both directions.
+#: Measured: punctuated captions run about 0.069, unpunctuated about 0.0003.
 _PUNCTUATION_DENSITY = 0.01
 
-#: Words needed before the measurement above is trusted at all. A handful of
-#: cues can be punctuated or not by accident.
+#: Words needed before the measurement above is trusted at all.
 _ENOUGH_TO_JUDGE = 200
 
 
@@ -86,17 +67,9 @@ def ends_sentence(text: str) -> bool:
 def looks_punctuated(cues: Sequence[Cue]) -> bool | None:
     """Whether this track's text carries sentence punctuation.
 
-    `None` means there is too little text to say, and the caller should fall
-    back to what the track's tier claims.
-
-    Measured rather than assumed because the assumption expired. Platform
-    automatic captions were unpunctuated and uncased for years, and are not any
-    more; a tier flag records what the track *is*, which is the right basis for
-    deciding deduplication and the wrong one for deciding whether there are
-    sentences to align to. The two differ in what being wrong costs: a bad
-    deduplication guess eats words unrecoverably, while a bad punctuation guess
-    only means a paragraph breaks on length instead of on a full stop, with
-    `max_words` still bounding it.
+    `None` means too little text to say; the caller falls back to the tier.
+    Measured rather than assumed, because platform captions used to be
+    unpunctuated and now are not.
     """
     words = 0
     endings = 0
@@ -128,12 +101,8 @@ def split_at_sentences(cues: Sequence[Cue]) -> list[Cue]:
 def cut_at(cue: Cue, before: Iterable[int]) -> list[Cue]:
     """Cut one cue into pieces, each starting at the word index given.
 
-    Every piece is dated by the timing of the word that opens it, which is the
-    only honest answer and the reason a cue with no word timings is returned
-    whole. `refine.dedupe` draws that line in the same place and for the same
-    reason: a cue whose words and text have drifted apart gives no way to say
-    which timing belongs to which word, and a cut placed on a guess would be a
-    fabricated timestamp wearing a measured one's clothes.
+    Each piece is dated by the word that opens it, so a cue whose word timings
+    do not line up with its text is returned whole.
     """
     tokens = cue.text.split()
     if len(cue.words) != len(tokens):
@@ -166,13 +135,7 @@ def cut_at(cue: Cue, before: Iterable[int]) -> list[Cue]:
 
 
 def _within(value: float, low: float, high: float) -> float:
-    """`value`, kept inside the cue it came from.
-
-    Word offsets are clamped at zero by the parsers, so one can in principle
-    land before the cue that carries it. Letting that through would put a
-    piece's start before its predecessor's and break the ordering every
-    consumer downstream relies on.
-    """
+    """`value`, kept inside the cue it came from, so pieces stay in order."""
     return min(max(value, low), high)
 
 
@@ -194,18 +157,15 @@ def _is_abbreviation(word: str) -> bool:
     parts = stem.split(".")
     if len(parts) == 1:
         return len(stem) == 1 and stem.isalpha()  # an initial: "J."
-    # A dotted acronym — "U.S.", "Ph.D." Every part is a letter or two, which
-    # is what separates it from a genuine sentence end followed by nothing.
+    # A dotted acronym — "U.S.", "Ph.D." — every part a letter or two.
     return all(part.isalpha() and len(part) <= 2 for part in parts)
 
 
 def _opens_a_sentence(word: str) -> bool:
     """Whether this word could begin a sentence.
 
-    Requiring a capital or a digit is the conservative half of the test, and
-    does the work of a much longer abbreviation list: "3.5 billion" and "e.g.
-    the second one" both fail it. A sentence wrongly left uncut is invisible —
-    it is exactly what happens today.
+    A capital or a digit is required, which does the work of a long
+    abbreviation list: "e.g. the second one" fails it.
     """
     opener = word.lstrip(_OPENING)
     return bool(opener) and (opener[0].isupper() or opener[0].isdigit())

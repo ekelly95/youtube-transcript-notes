@@ -1,30 +1,14 @@
 """Caption markup, read as structure rather than carried as noise.
 
-A caption track says more than the words. `[MUSIC]` says nobody is speaking,
-`[INAUDIBLE]` says the captioner could not hear, `[? maybe ?]` says they heard
-something and are not sure, `>>` says the speaker changed, and `PROFESSOR:`
-says who it is. All five are signals, and until this stage existed all five
-arrived in the finished document as literal text — and then, because a
-transcript is a stranger's text and `render.escape` neutralises brackets
-without inspecting them, as *backslashed* literal text: `\\[INAUDIBLE\\]`. The
-captioner did the work and the pipeline threw it away.
+`[MUSIC]` says nobody is speaking, `[INAUDIBLE]` that the captioner could not
+hear, `[? maybe ?]` that they guessed, `>>` that the speaker changed, and
+`PROFESSOR:` who it is. This stage turns those into fields and marks.
 
-Consuming the markup here rather than in the renderers is what keeps that
-escaping safe to leave alone. `render.escape` is deliberately unconditional —
-it has no notion of which brackets are trustworthy, and giving it one would be
-the beginning of an exception list that an uploader eventually writes into. By
-the time a passage reaches a renderer the recognised markup is already gone,
-turned into fields, and anything left over is unrecognised text that *should*
-be neutralised. Parsers stay faithful for the same reason in reverse: they
-represent what was published, and this is the stage where published becomes
-readable.
-
-Two things are deliberately not done. Non-speech cues are dropped rather than
-noted, because "[MUSIC]" is not something anybody said and a note saying so is
-worth less than the clutter it costs. And an anonymous `>>` turn is never given
-a name or a number: the marker asserts that the speaker changed, not that this
-is the second speaker, and alternating A/B labels across an interview would
-state something the captions never said.
+Consuming markup here keeps `render.escape` unconditional: by the time a
+passage reaches a renderer, recognised markup is gone and anything left is
+text to neutralise. Non-speech cues are dropped, not noted. An anonymous `>>`
+turn is never given a name or number — the captions only say the speaker
+changed.
 """
 
 from __future__ import annotations
@@ -38,9 +22,8 @@ from .sentences import cut_at
 
 __all__ = ["consume_markup"]
 
-#: What a bracketed cue means when it is not speech. Matched case-insensitively
-#: against the whole bracket body, so a stray "[music]" in quoted prose has to
-#: be alone in its brackets to be dropped.
+#: Bracket bodies that mean "not speech". Matched against the whole body, so a
+#: word must be alone in its brackets to be dropped.
 _NON_SPEECH = frozenset(
     {
         "applause",
@@ -62,27 +45,18 @@ _NON_SPEECH = frozenset(
 #: Bracket bodies meaning the captioner could not make the words out.
 _UNHEARD = frozenset({"inaudible", "unintelligible", "indistinct"})
 
-#: How an unheard stretch is written once consumed. Round brackets rather than
-#: square on purpose: square brackets are what `render.escape` backslashes, so
-#: a marker built from them would arrive in the document as the same
-#: `\\[INAUDIBLE\\]` residue this stage exists to remove. Round brackets are
-#: left alone by the escaper — with `[` and `]` neutralised, a bare `(…)`
-#: cannot become a link — and, unlike the typographic angle marks tried first,
-#: they survive a Windows console, which encodes stdout as cp1252 and refuses
-#: anything outside it.
+#: How an unheard stretch is written. Round brackets, because `render.escape`
+#: backslashes square ones and typographic marks break a cp1252 console.
 _UNHEARD_MARK = "(inaudible)"
 
-#: How an uncertain transcription is written: the captioner's guess, kept, with
-#: their doubt attached. `[? a cure. ?]` becomes `a cure.(?)`.
+#: How an uncertain transcription is written: `[? a cure. ?]` becomes
+#: `a cure.(?)`, the guess kept with the doubt attached.
 _DOUBT_MARK = "(?)"
 
 _BRACKETED = re.compile(r"\[([^\[\]]*)\]")
 
-#: A speaker label at the start of a cue: `PROFESSOR:`, `GRAHAM NEUBIG:`,
-#: `AUDIENCE:`. Upper case throughout and at least three characters, which is
-#: what keeps it from eating an ordinary sentence that happens to contain a
-#: colon. A lecturer who shouts a single word before a colon will lose it; that
-#: is the trade, and it is the right way round.
+#: A speaker label opening a cue: `PROFESSOR:`, `GRAHAM NEUBIG:`. Upper case and
+#: at least three characters, so an ordinary sentence with a colon survives.
 _LABEL = re.compile(r"^\s*([A-Z][A-Z0-9 .'\-]{2,38}):\s*")
 
 #: The speaker-change marker, as WebVTT and most captioners write it.
@@ -100,9 +74,8 @@ def consume_markup(cues: Sequence[Cue]) -> list[Cue]:
             if named is not None:
                 speaker = named
             elif turn:
-                # Somebody else is talking and the captions did not say who.
-                # Keeping the previous name would attribute their words to the
-                # wrong person, which is worse than not knowing.
+                # Someone else is talking and the captions did not say who;
+                # keeping the previous name would misattribute their words.
                 speaker = None
 
             text = _tidy(text, previous=consumed)
@@ -127,13 +100,7 @@ def consume_markup(cues: Sequence[Cue]) -> list[Cue]:
 
 
 def _retime(cue: Cue, words: tuple[Word, ...]) -> float:
-    """When this cue starts, now that a marker has been taken off the front.
-
-    `>> That matches what we saw` starts, as published, at the `>>`. Once the
-    glyph is gone the cue starts when somebody said "That", and using the
-    older moment would put the paragraph's timestamp on markup — half a second
-    of nothing, at the exact boundary where a listener is checking a quote.
-    """
+    """When this cue starts once a leading marker is gone: at its first word."""
     if not words or words is cue.words:
         return cue.start
     return min(max(words[0].start, cue.start), cue.end)
@@ -142,12 +109,8 @@ def _retime(cue: Cue, words: tuple[Word, ...]) -> float:
 def _realign(cue: Cue, text: str) -> tuple[Word, ...]:
     """The word timings that still belong to this cue, once markup has gone.
 
-    Removing a leading `>>` or a `PROFESSOR:` leaves the words that remain as a
-    suffix of the originals, which can be matched exactly rather than guessed
-    at. Markup removed from the middle cannot be matched that way, and the
-    timings are dropped rather than misattributed — one word's start standing
-    in for another's is precisely the fabrication the rest of this package
-    refuses to make.
+    A removed prefix leaves the remaining words as an exact suffix of the
+    originals. Anything else drops the timings rather than misattributing them.
     """
     tokens = text.split()
     if len(cue.words) != len(cue.text.split()):
@@ -160,14 +123,10 @@ def _realign(cue: Cue, text: str) -> tuple[Word, ...]:
 
 
 def _turns(cue: Cue) -> list[Cue]:
-    """Split a cue that carries a speaker change part way through it.
+    """Split a cue at a speaker change part way through it.
 
-    Captioners usually start a cue at `>>`, in which case there is nothing to
-    split. When they do not, the turn belongs at the word it happened on and
-    not at the start of whatever cue contains it, so the cue is cut there — by
-    the same word timings that date a sentence boundary. A track with no word
-    timings keeps the cue whole and the turn moves to its start, which is at
-    most one cue early.
+    Cut by word timings where they exist; without them the cue stays whole and
+    the turn moves to its start, at most one cue early.
     """
     tokens = cue.text.split()
     inner = [index for index, token in enumerate(tokens) if token == _TURN and index]
@@ -188,8 +147,7 @@ def _read(text: str) -> tuple[str, bool, str | None]:
         turn = True
         stripped = stripped[len(_TURN) :].lstrip()
 
-    # Any `>>` left is one this cue did not open with and could not be cut on.
-    # The glyph is markup either way and does not belong in the prose.
+    # A `>>` that could not be cut on is still markup, not prose.
     stripped = stripped.replace(_TURN, " ")
 
     named = None
@@ -214,7 +172,7 @@ def _bracket(match: re.Match[str]) -> str:
         return ""
     if folded in _UNHEARD:
         return _UNHEARD_MARK
-    # Unrecognised. Left exactly as published, and neutralised downstream.
+    # Unrecognised: left as published, and neutralised downstream.
     return match.group(0)
 
 
@@ -224,14 +182,12 @@ def _tidy(text: str, previous: list[Cue]) -> str:
 
     merged: list[str] = []
     for word in words:
-        # Runs of unheard speech are one fact, not several. Student questions
-        # in a lecture hall produce them by the handful, and rendered one per
-        # marker they read as shrapnel rather than as "this part is missing".
+        # A run of unheard speech is one fact, not several.
         if word == _UNHEARD_MARK and merged and merged[-1] == _UNHEARD_MARK:
             continue
         merged.append(word)
 
-    # The same run, arriving one marker per cue rather than several in one.
+    # The same run, arriving one marker per cue.
     if merged == [_UNHEARD_MARK] and previous:
         if previous[-1].text.endswith(_UNHEARD_MARK):
             return ""

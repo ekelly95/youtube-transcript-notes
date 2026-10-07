@@ -1,23 +1,10 @@
 """The error taxonomy.
 
-This module is written before any code that can fail, because the taxonomy is
-the specification of what is allowed to go wrong. Anything that raises should
-be able to name its failure here; if it cannot, the failure has not been
-thought about yet.
+Everything the tool raises deliberately is named here. Each error carries
+``cause`` (prose for a person) and ``remedy`` (a stable ``code`` plus ordered
+next steps, so an agent can branch without parsing English).
 
-Every error carries two audiences:
-
-``cause``
-    Prose for a human, explaining what happened and what to do about it. Error
-    text is documentation people actually read, so it is worth writing well.
-
-``remedy``
-    The same information as data — a stable ``code`` plus an ordered list of
-    next actions — so that an agent driving the tool can branch on a failure
-    instead of pattern-matching English.
-
-This module depends on nothing but the standard library, and must stay that way
-so that any layer can raise from it without an import cycle.
+Standard library only, so any layer can raise from it without an import cycle.
 """
 
 from __future__ import annotations
@@ -157,17 +144,9 @@ class RegionBlocked(SourceError):
 class PlaylistNotSupported(SourceError):
     """A collection, where a single lecture was expected.
 
-    Its own error because the alternative is worse than unhelpful: a playlist
-    URL reaches the extractor, comes back carrying no caption tracks of its
-    own, and is reported as a lecture with no captions — which is true of the
-    playlist and says nothing about the lectures in it.
-
-    Playlists are turned into their videos by ``expand`` before discovery, so
-    from the command line this now names the collections the tool deliberately
-    leaves alone — channels and search pages, which can run to thousands of
-    videos with nothing in common. ``list`` itself still refuses every
-    collection: it answers for one lecture, and expansion is a separate,
-    earlier step.
+    Otherwise a collection would be misreported as a video with no captions.
+    Playlists are expanded before discovery, so from the CLI this names what is
+    left alone on purpose: channels and search pages.
     """
 
     CODE = "PLAYLIST_NOT_SUPPORTED"
@@ -190,9 +169,7 @@ class PlaylistNotSupported(SourceError):
 class PlaylistTooLarge(SourceError):
     """A playlist past the size the tool is willing to expand.
 
-    Refused whole rather than truncated, because the first few hundred videos
-    of an enormous playlist look exactly like a complete run to anyone reading
-    the output folder — a silent cap is data loss reported as success.
+    Refused whole: a silently truncated run looks complete.
     """
 
     CODE = "PLAYLIST_TOO_LARGE"
@@ -212,10 +189,8 @@ class PlaylistTooLarge(SourceError):
 class PlaylistEmpty(SourceError):
     """A playlist that was reached and holds nothing.
 
-    Deliberately raised outside the cache fallback in ``expand``: emptiness is
-    a present-tense fact learned by reaching the source, and serving last
-    week's roster for a playlist that now says it has none would be inventing
-    lectures it no longer offers.
+    Raised outside `expand`'s cache fallback: emptiness is a fact learned by
+    reaching the source.
     """
 
     CODE = "PLAYLIST_EMPTY"
@@ -231,11 +206,8 @@ class PlaylistEmpty(SourceError):
 class SeveralLectures(SourceError):
     """A folder holding more than one lecture, where one was expected.
 
-    The line `PlaylistNotSupported` draws, for the other provider: `list`
-    answers for one lecture, and turning a collection into its members is
-    `expand`'s job, a separate and earlier step. The command line never reaches
-    this — a folder is expanded before the loop — so it is what a library
-    caller meets on handing `list` a course directory.
+    The CLI expands folders first, so this is what a library caller meets on
+    handing `list` a course directory.
     """
 
     CODE = "SEVERAL_LECTURES"
@@ -260,29 +232,16 @@ class SeveralLectures(SourceError):
             listing += f"\n  … and {len(names) - len(shown)} more"
         super().__init__(count=len(names), lectures=listing, **context)
 
-    #: Contract 5 applies to an error message holding three hundred lecture
-    #: names as much as to a listing, and for the same reason.
+    #: Names listed before summarising the rest (contract 5).
     MAX_LISTED = 12
 
 
 class TransportContractChanged(SourceError):
-    """The tool and its transport no longer agree on the shape of a lecture.
+    """The tool and its transport no longer agree on the shape of a result.
 
-    The failure this exists to stop being invisible: the tool reads
-    ``subtitles`` and ``automatic_captions`` out of what yt-dlp returns, and
-    read them defensively enough that a rename produced *no tracks* rather
-    than an error. That surfaced as `NoCaptionsAvailable` — a confident
-    statement that the lecture has no captions, made about a video that has
-    plenty, sending the reader to check a video that is fine.
-
-    Same reasoning as `PlaylistNotSupported`: an empty result is only honest
-    when the emptiness is the *source's*, and a wrong diagnosis is worse than
-    an unhelpful one. So the distinction drawn is narrow and deliberate —
-    caption keys *absent* means the contract moved, caption keys *present and
-    empty* means the lecture really has none.
-
-    Nearly always fixed by upgrading yt-dlp, which is why that is the first
-    thing suggested and why the tool no longer caps the version it accepts.
+    Caption keys *absent* means the contract moved; *present and empty* means
+    the video really has no captions (`NoCaptionsAvailable`). Usually fixed by
+    upgrading yt-dlp.
     """
 
     CODE = "TRANSPORT_CONTRACT_CHANGED"
@@ -307,15 +266,8 @@ class TransportContractChanged(SourceError):
 class TransportNotInstalled(SourceError):
     """The optional YouTube transport is not installed.
 
-    Kept apart from `AcquisitionFailed` because nothing here is a transport
-    *failure*: no network was reached, retrying will never help, and the
-    fallback's advice — retry, check the transport is current — is advice
-    about a package that is not there.
-
-    Two remedies rather than one, because they are not interchangeable. pipx
-    gives a tool its own environment, so `pip install` typed at a shell
-    succeeds against a different environment entirely and changes nothing the
-    tool can see — leaving the same error and no apparent reason for it.
+    Not `AcquisitionFailed`: retrying never helps. Two remedies, because under
+    pipx a plain `pip install` reaches a different environment.
     """
 
     CODE = "TRANSPORT_NOT_INSTALLED"
@@ -337,9 +289,8 @@ class TransportNotInstalled(SourceError):
 class AcquisitionFailed(SourceError):
     """The transport failed in a way we could not classify.
 
-    This is the honest fallback. It exists so unclassified transport failures
-    still arrive as a ``TranscriptError`` with the underlying detail attached,
-    rather than leaking a third-party exception type to the caller.
+    The honest fallback, carrying the underlying detail rather than leaking a
+    third-party exception type.
     """
 
     CODE = "ACQUISITION_FAILED"
@@ -379,15 +330,8 @@ class NoCaptionsAvailable(CaptionError):
 class PayloadTooLarge(CaptionError):
     """A caption payload was past the size the tool is willing to hold.
 
-    Separate from `MalformedCaptions` because the data is not malformed — it
-    may be perfectly well-formed and simply enormous, and telling someone
-    their file is corrupt when it is merely huge sends them to fix the wrong
-    thing.
-
-    Raised *before* the payload is fully in memory wherever the boundary
-    allows it, which is the only way this helps. An error raised after the
-    allocation that would have killed the process is an epitaph, not a guard.
-    See `limits` for the numbers and the measurements behind them.
+    Not `MalformedCaptions`: the data may be well-formed and merely huge.
+    Raised before the payload is in memory wherever possible; see `limits`.
     """
 
     CODE = "PAYLOAD_TOO_LARGE"
@@ -414,10 +358,8 @@ class PayloadTooLarge(CaptionError):
 class TrackNotFound(CaptionError):
     """No track matched the requested languages and trust tiers.
 
-    Carries the full availability listing, because "not found" without showing
-    what *was* available forces the caller to go and look it up by hand. The
-    listing is passed in pre-formatted so this module stays free of imports
-    from the resolver.
+    Carries the availability listing, pre-formatted to keep this module free
+    of resolver imports.
     """
 
     CODE = "TRACK_NOT_FOUND"
@@ -467,18 +409,10 @@ class MalformedCaptions(CaptionError):
 
 
 class EmptyTranscript(CaptionError):
-    """A track was fetched, read and understood, and holds no text at all.
+    """A track was fetched and parsed without complaint, and holds no text.
 
-    Distinct from `MalformedCaptions`, which is a file that could not be read,
-    and from `NoCaptionsAvailable`, which is a claim about the *lecture* — that
-    it offers no tracks of any kind. This is narrower and better evidenced than
-    either: a track was offered, fetched and parsed without complaint, and
-    there was nothing in it.
-
-    Raised rather than returned, because the alternative is what it replaced —
-    a note holding a title and nothing else, written to disk, reported as
-    success. Contract 7 names this case exactly: a fetched track with no usable
-    text is `EmptyTranscript`, and the source was reached to establish it.
+    Raised rather than returned, so an empty note is never written and called a
+    success (contract 7).
     """
 
     CODE = "EMPTY_TRANSCRIPT"
@@ -493,11 +427,7 @@ class EmptyTranscript(CaptionError):
 
 
 class MalformedLecture(TranscriptError):
-    """A serialised lecture could not be read back.
-
-    Raised at the I/O boundary — the cache, or anything loading a stored
-    lecture — so the data model itself stays free of defensive branching.
-    """
+    """A serialised lecture could not be read back."""
 
     CODE = "MALFORMED_LECTURE"
     CAUSE = "Stored lecture data could not be read: {detail}"
@@ -529,13 +459,7 @@ class UnknownRenderer(ConfigError):
 
 
 class UnknownProvider(ConfigError):
-    """Nothing recognised the source.
-
-    In practice this nearly always means a mistyped path or URL, so the
-    message addresses that rather than reporting a provider-registry miss —
-    which is a true statement about the internals and no help at all to
-    someone who dropped a character from a filename.
-    """
+    """Nothing recognised the source — nearly always a mistyped path or URL."""
 
     CODE = "UNKNOWN_PROVIDER"
     CAUSE = (
@@ -564,11 +488,8 @@ class UnknownCaptionFormat(ConfigError):
 class InputUnreadable(ConfigError):
     """A file the caller pointed at could not be read at all.
 
-    Separate from the shape errors below because the two need different
-    advice: a file with the wrong contents needs editing, and a file that is
-    not there needs a different path. Without this, a mistyped `--glossary`
-    left the CLI raising a bare `FileNotFoundError` — the commonest possible
-    mistake, reported as a traceback.
+    Separate from shape errors: a missing file needs a different path, not an
+    edit.
     """
 
     CODE = "INPUT_UNREADABLE"
@@ -583,12 +504,7 @@ class InputUnreadable(ConfigError):
 
 
 class MalformedCorrections(ConfigError):
-    """A corrections file could not be read.
-
-    Its own error rather than a caption one: the file is something the caller
-    wrote or a model produced, so the fix is in their hands and the message
-    should say what shape was expected rather than blame the lecture.
-    """
+    """A corrections file could not be read; says what shape was expected."""
 
     CODE = "MALFORMED_CORRECTIONS"
     CAUSE = "Could not read corrections from {source}: {detail}."
@@ -598,12 +514,9 @@ class MalformedCorrections(ConfigError):
     )
 
 
-# --- Output ------------------------------------------------------------------
-#
-# Its own family rather than a kind of `ConfigError`: the request was fine and
-# the lecture was fetched, parsed and rendered. Only the copy on disk is
-# missing, and the document itself is intact — which is why a failed write
-# costs one lecture rather than the run.
+# --------------------------------------------------------------------------
+# Output — the document was produced, but could not be filed.
+# --------------------------------------------------------------------------
 
 
 class OutputError(TranscriptError):
@@ -625,13 +538,7 @@ class OutputUnwritable(OutputError):
 
 
 class OutputExists(OutputError):
-    """Something is already at that name, and it is not this lecture's note.
-
-    Two leaves rather than one, on the same reasoning `InputUnreadable` gives:
-    a read-only directory needs a different directory and an occupied name
-    needs a decision about replacing it, so one message would give the wrong
-    advice to half the people reading it.
-    """
+    """Something else is already at that name; replacing it needs a decision."""
 
     CODE = "OUTPUT_EXISTS"
     CAUSE = (

@@ -1,38 +1,26 @@
 """Caption files already on disk.
 
-Useful in its own right — for lectures downloaded elsewhere, exported from a
-course platform, or transcribed with a separate tool — and useful as the
-second implementation of `SourceProvider`, which is what stops the abstraction
-being shaped entirely around YouTube.
+For captions downloaded elsewhere, exported from a course platform, or made by
+a separate transcription tool.
 
-**Filename convention.** Everything between the stem and the extension is read
-as metadata::
+**Filename convention.** Everything between the stem and the extension is
+metadata::
 
     6006-lec1.en.json3            English, assumed human-written
     6006-lec1.auto.en.json3       English, platform auto-captions
     6006-lec1.whisper.en.vtt      English, locally transcribed
     lecture.vtt                   language unknown, matches any request
 
-Tracks default to `MANUAL` when unmarked, because that is what a file someone
-put on disk deliberately usually is. Mark auto-generated captions with
-``.auto.`` — the tier decides whether rolling-window deduplication runs, and
-an auto-captioned WebVTT track mistaken for a human-written one will keep its
-repeated text.
+Unmarked tracks are `MANUAL`. Mark automatic captions with ``.auto.``: the
+tier decides whether rolling-window deduplication runs.
 
-**Folders.** One lecture per stem — the name up to the first dot. Files sharing
-it are tracks of one lecture, different stems are different lectures, and
-`expand` turns a folder into one source per lecture before `list` is ever
-called. Not recursive, and files the tool does not read form no group, so a
-`notes.md` beside the captions is ignored rather than becoming a lecture with no
-tracks. A lecture inside a folder can be named by its stem — ``6.006/week-03``
-— which is also how expansion addresses them.
+**Folders.** One lecture per stem (the name up to the first dot); files
+sharing it are tracks of one lecture. Not recursive, and unreadable files form
+no group. A lecture in a folder can be named by its stem, e.g.
+``6.006/week-03``.
 
-A part the tool does not recognise is **skipped, not guessed at**, and the first
-recognised one wins. Both halves of that were once wrong: any two or three
-letters counted as a language, so `lecture.raw.vtt` was a lecture in the `raw`
-language; and the last match won, so `lecture.en.raw.vtt` was too — a correct
-label broken by a word appended after it. See `resolve.LANGUAGE_CODES` for what
-counts as a language and why the table is not simply ISO 639-3.
+Unrecognised parts are skipped, and the first recognised one wins, so
+``lecture.en.raw.vtt`` is English. See `resolve.LANGUAGE_CODES`.
 """
 
 from __future__ import annotations
@@ -90,19 +78,10 @@ class LocalProvider(SourceProvider):
             return False
 
     def expand(self, source: str) -> Expansion:
-        """Turn a folder into the lectures in it. Anything else comes back alone.
+        """Turn a folder into the lectures in it, addressed by stem.
 
-        A folder is the local playlist. `list` answers for one lecture and a
-        folder of a course is N, so the fan-out happens here, before `list` is
-        ever called — and each lecture then goes through `cli.run`'s existing
-        loop with the failure isolation, exit codes and `--out` naming a
-        playlist's videos already get. One `iterdir` and no file opened, which
-        is the same costs-nothing rule `list` keeps.
-
-        Each lecture is addressed by its stem — ``lectures/week-03`` — because
-        that is the one address naming a group of files without being one of
-        them. Naming a file explicitly still means that file and nothing beside
-        it.
+        One `iterdir`, no file opened. Anything that is not a folder comes back
+        alone.
         """
         path = Path(source)
         if not path.is_dir():
@@ -110,9 +89,7 @@ class LocalProvider(SourceProvider):
 
         groups = _by_stem(sorted(p for p in path.iterdir() if p.is_file()))
         if not groups:
-            # Refused rather than expanded to nothing, on `PlaylistEmpty`'s
-            # reasoning: a run that processes zero lectures, finds zero
-            # failures and prints nothing exits 0 looking like a success.
+            # Refused rather than expanded to nothing, which would exit 0.
             raise NoCaptionsAvailable(source=source)
 
         return Expansion(
@@ -154,34 +131,16 @@ class LocalProvider(SourceProvider):
         return TrackManifest(meta=meta, tracks=tuple(tracks))
 
     def load(self, ref: Any) -> str:
-        """Read one caption file.
-
-        ``utf-8-sig`` rather than ``utf-8``: several caption tools write a byte
-        order mark, and a leading ``﻿`` turns ``WEBVTT`` into a word the
-        parser does not recognise while looking identical in any editor. The
-        codec is plain UTF-8 when there is no mark to strip, so this costs
-        nothing for the files that never had one.
-        """
+        """Read one caption file (BOM-tolerant, size-capped)."""
         path = Path(ref)
         try:
             return read_capped(path)
         except OSError as error:
-            # `list` established that this file existed; `load` is a later
-            # moment, and a folder being synced, tidied or written to can move
-            # or lock the file in between. Without this the failure escapes as a
-            # bare `FileNotFoundError`, reaches the CLI's last resort, and is
-            # reported as "retry — transient network and rate-limit failures are
-            # common" — advice about a network this source never touches, for a
-            # problem no retry fixes. `InputUnreadable` says to check the path,
-            # which is the only thing that will help.
+            # The file may have moved since `list`; say so, not "retry".
             raise InputUnreadable(
                 source=path.name, detail=error.strerror or str(error)
             ) from error
         except UnicodeDecodeError as error:
-            # Without this the failure escapes as a bare `UnicodeDecodeError`,
-            # which the CLI reports as an unclassified acquisition failure —
-            # true, and no help at all to someone holding a caption file their
-            # editor saved as Latin-1.
             raise MalformedCaptions(
                 source=path.name,
                 fmt=path.suffix.lstrip("."),
@@ -209,16 +168,8 @@ def _describe(path: Path) -> tuple[TrustTier, str, str] | None:
 def _read_markers(parts: list[str]) -> tuple[TrustTier, str]:
     """Tier and language from the dotted middle of a filename. First wins.
 
-    First rather than last, because the convention this module documents reads
-    left to right — ``6006-lec1.auto.en.json3`` — and a later coincidence must
-    not overrule what the name already said. Last-match-wins is what made
-    ``lecture.en.raw.vtt`` resolve to `raw`: a file labelled correctly, broken
-    by a word appended after the label.
-
-    A part that means nothing to the tool is skipped rather than guessed at.
-    People put dates, part numbers and initials in filenames, and an unlabelled
-    track is not a silent failure — it lists as `und`, which matches whatever
-    language is asked for.
+    Unrecognised parts (dates, initials) are skipped; an unlabelled track lists
+    as `und`, which matches any requested language.
     """
     tier: TrustTier | None = None
     language: str | None = None
@@ -254,11 +205,8 @@ def _stem_siblings(path: Path) -> list[Path]:
 def _names_a_stem(path: Path) -> bool:
     """Whether ``path`` addresses a lecture by stem rather than by filename.
 
-    Deliberately narrow: a sibling counts only if it is a caption file
-    the tool would actually read, so an unrelated ``week-03.txt`` cannot capture
-    the name. This widens the rule that an existing path beats a video id —
-    typing a bare id while standing in a folder holding its captions now reads
-    the local file, which is almost certainly a download of that very lecture.
+    Only caption files count, so an unrelated ``week-03.txt`` cannot capture
+    the name.
     """
     return any(_is_lecture_file(child) for child in _stem_siblings(path))
 
@@ -266,10 +214,8 @@ def _names_a_stem(path: Path) -> bool:
 def _lecture_files(path: Path) -> list[Path] | None:
     """The files this source names, or None when it names nothing at all.
 
-    None and ``[]`` are different answers on purpose: a path matching nothing is
-    `LectureUnavailable`, while a folder holding nothing readable is
-    `NoCaptionsAvailable`. Telling somebody a folder they are looking at does
-    not exist is the wrong diagnosis.
+    None is `LectureUnavailable`; ``[]`` (a folder with nothing readable) is
+    `NoCaptionsAvailable`.
     """
     if path.is_file():
         return [path]
@@ -279,20 +225,11 @@ def _lecture_files(path: Path) -> list[Path] | None:
 
 
 def _by_stem(files: Sequence[Path]) -> dict[str, list[Path]]:
-    """Group caption files by the lecture they belong to.
+    """Group caption files by stem, in sorted filename order.
 
-    The lecture is everything before the first dot, which is this module's
-    documented filename convention: the stem names the lecture and every dotted
-    part after it describes one of its tracks. So ``lec1.en.vtt`` and
-    ``lec1.auto.en.json3`` are two tracks of one lecture, while
-    ``week-03.en.vtt`` and ``week-04.en.vtt`` are two lectures — the whole
-    difference between rendering a course and rendering the alphabetically
-    first file in it, which is what a folder used to do.
-
-    Files the tool does not recognise form no group, so a ``notes.md`` beside the
-    captions is ignored rather than becoming a lecture with no tracks. Insertion
-    order over sorted input, so a course renders in filename order and two runs
-    agree.
+    ``lec1.en.vtt`` and ``lec1.auto.en.json3`` are one lecture;
+    ``week-03.en.vtt`` and ``week-04.en.vtt`` are two. Unreadable files form no
+    group.
     """
     groups: dict[str, list[Path]] = {}
     for file in files:

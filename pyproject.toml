@@ -53,12 +53,8 @@ path = "src/youtube_transcript_notes/__init__.py"
 packages = ["src/youtube_transcript_notes"]
 
 [tool.hatch.build.targets.sdist]
-# Tests contain CC BY-NC-SA caption fixtures and must not enter the MIT package.
-#
-# The contributor and agent files stay out too. They are repo-local instructions
-# — `AGENTS.md` and `CLAUDE.md` are byte twins, so shipping one and not the
-# other picks a vendor for no reason, and none of the three tells someone who
-# installed the package anything they can act on.
+# Tests hold CC BY-NC-SA caption fixtures and must not enter the MIT package.
+# Agent and contributor files are repo-local instructions and stay out too.
 include = [
     "/src",
     "/README.md",
@@ -96,25 +92,15 @@ select = [
 ]
 
 [tool.mypy]
-# The package ships `py.typed`, so anything installing it type-checks against
-# these annotations. Strict is the only setting that makes that marker a
-# promise rather than a claim: without it the checker agrees with whatever is
-# written, including nothing at all.
-#
-# `src` only. Nothing installs the tests, so their annotations are a promise to
-# nobody, and the shortcuts they take deliberately — a `TrackHandle` holding no
-# provider because nothing will fetch it, a stub standing in for a response —
-# are the point of a test rather than a defect in one. They cannot be given a
-# relaxed profile either: a `module` override needs a package name, and
-# `tests/` has no `__init__.py` because `conftest` is imported by name.
+# The package ships `py.typed`, so `src` is checked strictly. Tests are out of
+# scope: nothing installs them, and their deliberate shortcuts (stubs, handles
+# with no provider) are the point of a test.
 files = ["src"]
 python_version = "3.10"
 strict = true
 
 [[tool.mypy.overrides]]
-# yt-dlp ships no type information. Its results are `Any` by necessity, which
-# is why `_require_shape` checks the shape at runtime instead — see the `Info`
-# alias in `sources/youtube.py`.
+# yt-dlp ships no types; `_require_shape` checks its results at runtime.
 module = ["yt_dlp.*"]
 ignore_missing_imports = true
 

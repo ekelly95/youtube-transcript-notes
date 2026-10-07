@@ -1,19 +1,19 @@
 """The public entry point.
 
 ```python
-fetcher = TranscriptFetcher()
+from youtube_transcript_notes import TranscriptFetcher, get_renderer
 
-manifest = fetcher.list("lectures/6006-lec1")   # nothing downloaded yet
+fetcher = TranscriptFetcher()
+manifest = fetcher.list("HtSuA80QTyo")   # nothing downloaded yet
 for handle in manifest:
     print(handle.track.describe())
 
 lecture = manifest.find(["en"]).fetch()
-print(MarkdownRenderer().render(lecture))
+print(get_renderer("markdown").render(lecture))
 ```
 
-`fetch` is a shortcut defined in terms of the primitives rather than the other
-way round, so anything the convenience method can do is also reachable a step
-at a time — which is what makes the discovery stage worth having.
+`fetch` is built from the primitives, so everything it does is also reachable
+a step at a time.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ __all__ = ["TranscriptFetcher"]
 
 
 class TranscriptFetcher:
-    """Turns a source of lectures into readable, citable text."""
+    """Turns a source into readable, citable text."""
 
     def __init__(
         self,
@@ -42,10 +42,8 @@ class TranscriptFetcher:
     ) -> None:
         """`provider` may be an instance, a registered name, or omitted.
 
-        Omitted is the usual case: the provider is chosen per source, so a
-        path and a video URL can be handed to the same object — which is also
-        why `cache` is configured here rather than on a provider the caller
-        never constructs.
+        Omitted is the usual case: the provider is chosen per source, so a path
+        and a video URL can go to the same fetcher.
         """
         self._clock = clock
         self._cache = cache
@@ -61,13 +59,10 @@ class TranscriptFetcher:
         )
 
     def expand(self, source: str) -> Expansion:
-        """Turn a playlist into the lectures it holds; anything else comes
-        back alone. Costs at most one request and fetches nothing.
+        """Turn a playlist into its videos; anything else comes back alone.
 
-        A source nothing recognises also comes back alone rather than
-        raising: expansion answers "what does this name", not "is this
-        valid", and the `list` call that follows reports an unrecognised
-        source once, where every other per-source failure is reported.
+        An unrecognised source also comes back alone rather than raising, so
+        `list` reports it once alongside every other per-source failure.
         """
         try:
             provider = self.provider_for(source)
@@ -87,5 +82,5 @@ class TranscriptFetcher:
         policy: ReflowPolicy | None = None,
         glossary: Glossary | None = None,
     ) -> Lecture:
-        """Discover, choose the best track, and reassemble it into a lecture."""
+        """Discover, choose the best track, and reassemble it."""
         return self.list(source).find(languages, tiers).fetch(policy, glossary)

@@ -1,9 +1,7 @@
 name: CI
 
-# Every push runs the whole matrix. The package claims OS independence and
-# Python 3.10-3.14 in its classifiers, and a portability claim tested only when
-# somebody remembers to trigger it by hand is a claim about the day they
-# remembered.
+# Every push runs the whole matrix, because the classifiers claim every OS and
+# Python version listed below.
 on:
   push:
     branches: [main]
@@ -31,10 +29,7 @@ jobs:
         run: ruff format --check .
       - name: Lint
         run: ruff check .
-      # The wheel ships `py.typed`, so anything installing this package checks
-      # its own code against these annotations. This is what makes that marker
-      # true rather than merely present — the build job asserts it shipped, and
-      # this asserts it was worth shipping.
+      # The wheel ships `py.typed`; this keeps the annotations worth shipping.
       - name: Types
         run: mypy
 
