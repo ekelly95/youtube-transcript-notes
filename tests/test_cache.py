@@ -23,6 +23,7 @@ from youtube_transcript_notes.cache import (
     CACHE_ENV_VAR,
     Cache,
     NullCache,
+    RefreshCache,
     default_cache_root,
 )
 
@@ -183,6 +184,18 @@ class TestPrecedence:
         assert cache.root == Path(".")
         assert cache.read("k" * 32) is None
         assert list(tmp_path.iterdir()) == []
+
+
+class TestRefreshCache:
+    def test_it_reads_nothing_but_stores_what_it_is_given(self, tmp_path: Path) -> None:
+        key = Cache.key("youtube", "abc")
+        Cache(tmp_path).write(key, "old")
+
+        refresh = RefreshCache(tmp_path)
+        assert refresh.read(key) is None
+
+        refresh.write(key, "new")
+        assert Cache(tmp_path).read(key) == "new"
 
 
 class TestACorruptEntryIsAMiss:

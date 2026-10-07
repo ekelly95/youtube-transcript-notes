@@ -16,7 +16,7 @@ from .atomic import atomic_write
 from .errors import PayloadTooLarge
 from .limits import MAX_PAYLOAD_BYTES, describe_size
 
-__all__ = ["Cache", "NullCache", "default_cache_root"]
+__all__ = ["Cache", "NullCache", "RefreshCache", "default_cache_root"]
 
 #: Environment override for the cache location.
 CACHE_ENV_VAR = "YOUTUBE_TRANSCRIPT_NOTES_CACHE"
@@ -99,6 +99,17 @@ class Cache:
             atomic_write(self.path_for(key), payload)
         except OSError:
             return
+
+
+class RefreshCache(Cache):
+    """Reads nothing but stores everything: one fresh run that refills the cache.
+
+    For captions that changed upstream since they were cached. A transport
+    failure is reported rather than answered from the cache.
+    """
+
+    def read(self, key: str) -> str | None:
+        return None
 
 
 class NullCache(Cache):

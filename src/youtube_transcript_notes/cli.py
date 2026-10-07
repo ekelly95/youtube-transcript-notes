@@ -25,7 +25,7 @@ from pathlib import Path
 from . import __version__
 from .api import TranscriptFetcher
 from .atomic import atomic_write
-from .cache import Cache, NullCache
+from .cache import Cache, NullCache, RefreshCache
 from .errors import (
     AcquisitionFailed,
     InputUnreadable,
@@ -164,9 +164,7 @@ def _outcomes(
     announce: _Announce | None = None,
 ) -> Iterator[_Outcome]:
     """Every source's outcome, one at a time, so `main` can act on each at once."""
-    fetcher = TranscriptFetcher(
-        cache=NullCache() if args.no_cache else Cache(args.cache)
-    )
+    fetcher = TranscriptFetcher(cache=_cache(args))
 
     try:
         glossary = _glossary(args)
@@ -286,6 +284,15 @@ class _Tally:
             failures=tuple(self.failures),
             notices=tuple(self.notices),
         )
+
+
+def _cache(args: argparse.Namespace) -> Cache:
+    """The cache this run reads and writes, as the flags ask."""
+    if args.no_cache:
+        return NullCache()
+    if args.refresh:
+        return RefreshCache(args.cache)
+    return Cache(args.cache)
 
 
 def _is_remote(fetcher: TranscriptFetcher, source: str) -> bool:
@@ -620,6 +627,14 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Fetch everything fresh and store nothing.",
     )
     parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Ignore cached captions and refetch them, storing the fresh copies. "
+            "For captions corrected upstream since they were cached."
+        ),
+    )
+    parser.add_argument(
         "--glossary",
         default=None,
         metavar="FILE",
@@ -648,6 +663,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--force applies to --out, which is what writes files")
     if args.delay < 0:
         parser.error("--delay cannot be negative")
+    if args.refresh and args.no_cache:
+        parser.error("--refresh stores what it fetches; --no-cache stores nothing")
     if args.budget is not None and not renderers.get(args.format).takes_budget:
         # Here, not at construction, where a `TypeError` would be misreported
         # as a failed lecture.

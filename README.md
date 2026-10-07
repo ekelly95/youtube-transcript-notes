@@ -107,7 +107,8 @@ youtube-transcript-notes <source>… [--out DIR] [--force]
   [--format markdown|plain|citation|jsonl|context] [--list]
   [--languages LANG…] [--tiers TIER…] [--budget N]
   [--glossary FILE] [--corrections FILE]
-  [--json] [--cache DIR | --no-cache] [--version]
+  [--delay SECONDS] [--json]
+  [--cache DIR] [--refresh | --no-cache] [--version]
 ```
 
 `<source>` may be a YouTube URL, video ID, playlist URL, caption file, or
@@ -147,11 +148,12 @@ Documents go to stdout and failures to stderr. Exit code `0` means all items
 succeeded, `1` means some failed, and `2` means nothing was produced. With
 `--json`, results and failures share one machine-readable document.
 
-Three combinations are refused before any work starts, because each one asks
+Four combinations are refused before any work starts, because each one asks
 for two different things at once: `--out` with `--list` (a listing is not a
 document to file), `--force` without `--out` (nothing is being overwritten),
-and `--budget` with a format that has no budget to spend — only `context`
-does.
+`--budget` with a format that has no budget to spend — only `context` does —
+and `--refresh` with `--no-cache` (one stores what it fetches, the other
+stores nothing).
 
 ## Trust and corrections
 
@@ -222,7 +224,9 @@ The default cache is:
 - Other Unix: `$XDG_CACHE_HOME/youtube-transcript-notes`, or
   `~/.cache/youtube-transcript-notes` when that variable is unset
 
-Use `YOUTUBE_TRANSCRIPT_NOTES_CACHE`, `--cache`, or `--no-cache` to override it.
+Use `YOUTUBE_TRANSCRIPT_NOTES_CACHE`, `--cache`, or `--no-cache` to override it,
+and `--refresh` to refetch captions that changed upstream and store the fresh
+copies.
 When yt-dlp cannot reach YouTube, cached videos remain usable and are clearly
 reported as stale. Updating yt-dlp is the usual repair for upstream changes.
 

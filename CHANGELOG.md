@@ -6,6 +6,58 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## 0.4.0
+
+Brought up to date with yt-dlp and Python as they stand in October 2026, and
+reshaped around how the tool is actually used: long playlists, podcasts and
+interviews as well as lectures, and notes kept in a notes app.
+
+**Breaking changes**
+
+- Python 3.11 or newer. 3.10 reaches end of life this month; 3.15 is now
+  supported and tested.
+- Markdown notes open with YAML frontmatter (title, source ID, URL, channel,
+  publication date, caption tier, language, generator). Anything that parsed
+  the first line as the `#` heading needs to skip the block.
+- The bundled skill is renamed `lecture-notes` → `video-notes`, in both the
+  Claude Code and Codex copies.
+- `str(TrustTier.MANUAL)` is now `"manual"`: the enum is a `StrEnum`.
+
+**YouTube**
+
+- The `youtube` extra installs `yt-dlp[default]>=2025.11.12`. That release
+  made a JavaScript runtime part of YouTube extraction and moved the solver
+  into `yt-dlp-ejs`, which only the `default` extra brings. The tool lets
+  yt-dlp use Deno, Node or Bun, whichever is installed, and when none is, the
+  advice on a transport failure says so.
+- YouTube's bot check and HTTP 429 are named failures, `BOT_CHECK` and
+  `RATE_LIMITED`, with advice about the connection and about waiting rather
+  than a suggestion to retry at once.
+- `--delay SECONDS` spaces out videos in one run (1 second by default, 0 to
+  turn it off), so a playlist does not reach YouTube as a burst.
+- `--refresh` refetches cached captions and stores the fresh copies.
+
+**Notes**
+
+- With `--out`, each note is written as soon as its video is done, and a
+  `[n/N]` progress line goes to stderr as each source starts. Ctrl-C keeps
+  every finished note and exits 130.
+- A note the tool wrote for the same YouTube video is re-rendered and
+  reported as `updated` — a corrections pass no longer needs `--force`.
+  Hand-written notes, another video's notes and notes from local caption
+  files are still refused. Notes written by 0.3.0 have no frontmatter, so
+  refresh them once with `--force`.
+- A video longer than twenty minutes with no published chapters gets a
+  timestamp heading every ten minutes.
+- User-facing wording covers talks, podcasts and interviews; the skill tells
+  summaries to attribute each claim to the speaker who made it. The Python
+  API keeps its names.
+
+**Maintenance**
+
+- Comments and docstrings trimmed to the reasons and contracts, from 0.63 to
+  0.30 lines of prose per line of code, verified to change no code.
+
 ## 0.3.0
 
 First release on PyPI: `pipx install "youtube-transcript-notes[youtube]"`.

@@ -1202,6 +1202,34 @@ class TestCaching:
         run([SOURCE, "--cache", str(tmp_path / "unused")])
         assert not (tmp_path / "unused").exists()
 
+    def test_refresh_refetches_what_is_cached_and_stores_it_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from youtube_transcript_notes.sources import youtube
+
+        TestPlaylistsExpand._wire(monkeypatch)
+        fetched: list[str] = []
+
+        def counting(url: str, source: str = "youtube") -> str:
+            fetched.append(url)
+            return load_caption("mit6006-lec1.manual.en.json3")
+
+        monkeypatch.setattr(youtube, "_open_url", counting)
+        video = "https://www.youtube.com/watch?v=Video00000A"
+
+        assert run([video]).exit_code == EXIT_OK
+        assert run([video]).exit_code == EXIT_OK
+        assert len(fetched) == 1  # the second run was served from the cache
+
+        assert run([video, "--refresh"]).exit_code == EXIT_OK
+        assert len(fetched) == 2
+        assert run([video]).exit_code == EXIT_OK
+        assert len(fetched) == 2  # and the fresh copy was stored
+
+    def test_refresh_and_no_cache_contradict_each_other(self) -> None:
+        with pytest.raises(SystemExit):
+            run([SOURCE, "--refresh", "--no-cache"])
+
 
 class TestEntryPoint:
     def test_main_prints_and_returns_the_exit_code(
