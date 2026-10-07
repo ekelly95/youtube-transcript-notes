@@ -19,6 +19,7 @@ from youtube_transcript_notes.cache import Cache, NullCache
 from youtube_transcript_notes.errors import (
     AcquisitionFailed,
     AgeRestricted,
+    BotCheck,
     LectureUnavailable,
     MalformedCaptions,
     NoCaptionsAvailable,
@@ -26,7 +27,9 @@ from youtube_transcript_notes.errors import (
     PlaylistEmpty,
     PlaylistNotSupported,
     PlaylistTooLarge,
+    RateLimited,
     RegionBlocked,
+    SourceError,
     TrackNotFound,
     TransportContractChanged,
 )
@@ -977,10 +980,34 @@ class TestFailureClassification:
                 "The uploader has not made this video available in your country",
                 RegionBlocked,
             ),
+            # YouTube's own text, curly apostrophe (U+2019) and all.
+            (
+                (
+                    "ERROR: [youtube] HtSuA80QTyo: Sign in to confirm you\u2019re "
+                    "not a bot. Use --cookies-from-browser or --cookies for the "
+                    "authentication."
+                ),
+                BotCheck,
+            ),
+            ("Sign in to confirm you're not a bot", BotCheck),
+            ("HTTP Error 429: Too Many Requests", RateLimited),
+            ("Too many requests, slow down", RateLimited),
         ],
     )
     def test_known_failures_are_named(self, message: str, expected: type) -> None:
         assert isinstance(_classify(VIDEO_ID, RuntimeError(message)), expected)
+
+    @pytest.mark.parametrize("failure", [BotCheck, RateLimited])
+    def test_connection_failures_fall_back_to_the_cache(self, failure: type) -> None:
+        """Both are `SourceError`s: the video was not reached, so a cached
+        manifest is still the best answer."""
+        assert issubclass(failure, SourceError)
+
+    def test_connection_failures_do_not_advise_an_immediate_retry(self) -> None:
+        for failure in (BotCheck, RateLimited):
+            advice = " ".join(failure(source=VIDEO_ID).remedy["try"]).lower()
+            assert "--delay" in advice
+            assert not advice.startswith("retry")
 
     def test_an_unrecognised_failure_keeps_its_detail(self) -> None:
         # Better an honest "something went wrong, here is what it said" than a

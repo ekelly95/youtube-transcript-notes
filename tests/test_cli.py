@@ -425,6 +425,51 @@ class TestPlaylistsExpand:
         assert "expanded into its videos automatically" in result.report
 
 
+class TestPacing:
+    """A playlist fetched back to back is what YouTube's bot check is for."""
+
+    def test_remote_sources_are_spaced_out_but_not_before_the_first(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        TestPlaylistsExpand._wire(monkeypatch)
+
+        assert run([TestPlaylistsExpand.PLAYLIST]).exit_code == EXIT_OK
+        assert no_pacing == [cli.DEFAULT_DELAY, cli.DEFAULT_DELAY]
+
+    def test_delay_is_configurable(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        TestPlaylistsExpand._wire(monkeypatch)
+
+        run([TestPlaylistsExpand.PLAYLIST, "--delay", "2.5"])
+
+        assert no_pacing == [2.5, 2.5]
+
+    def test_zero_turns_it_off(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        TestPlaylistsExpand._wire(monkeypatch)
+
+        run([TestPlaylistsExpand.PLAYLIST, "--delay", "0"])
+
+        assert no_pacing == []
+
+    def test_local_files_are_never_delayed(
+        self, tmp_path: Path, no_pacing: list[float]
+    ) -> None:
+        for week in ("week-01", "week-02", "week-03"):
+            (tmp_path / f"{week}.en.json3").write_text(
+                load_caption("mit6006-lec1.manual.en.json3"), encoding="utf-8"
+            )
+
+        assert run([str(tmp_path)]).exit_code == EXIT_OK
+        assert no_pacing == []
+
+    def test_a_negative_delay_is_refused(self) -> None:
+        with pytest.raises(SystemExit):
+            run([SOURCE, "--delay", "-1"])
+
+
 class TestServedFromCacheIsAnnounced:
     """A run the transport could not reach must not look like one that did.
 

@@ -15,6 +15,7 @@ from typing import Any
 __all__ = [
     "AcquisitionFailed",
     "AgeRestricted",
+    "BotCheck",
     "CaptionError",
     "ConfigError",
     "EmptyTranscript",
@@ -31,6 +32,7 @@ __all__ = [
     "PlaylistEmpty",
     "PlaylistNotSupported",
     "PlaylistTooLarge",
+    "RateLimited",
     "RegionBlocked",
     "SeveralLectures",
     "SourceError",
@@ -147,6 +149,48 @@ class RegionBlocked(SourceError):
     TRY = (
         "Check whether the hosting institution publishes the lecture elsewhere.",
         "Look for an official mirror or course archive.",
+    )
+
+
+class BotCheck(SourceError):
+    """YouTube demanded a sign-in to prove the caller is not a bot.
+
+    A fact about the connection, not the video: datacenter, VPN and busy
+    shared addresses are treated as automated.
+    """
+
+    CODE = "BOT_CHECK"
+    CAUSE = (
+        "YouTube refused {source!r} with a sign-in check (\"confirm you're not "
+        'a bot"). This is about the network connection, not the video.'
+    )
+    TRY = (
+        (
+            "Run from an ordinary home connection rather than a VPN, a cloud "
+            "machine or a CI runner."
+        ),
+        (
+            "Wait a while before retrying, and raise --delay for long "
+            "playlists: a burst of requests can trigger the check."
+        ),
+        (
+            "There is no cookie or sign-in option: the tool has no account "
+            "handling, deliberately."
+        ),
+    )
+
+
+class RateLimited(SourceError):
+    """YouTube is throttling requests (HTTP 429). Retrying at once makes it worse."""
+
+    CODE = "RATE_LIMITED"
+    CAUSE = "YouTube is rate-limiting requests (HTTP 429), so {source!r} was refused."
+    TRY = (
+        (
+            "Wait several minutes, then run the same command again. Fetched "
+            "captions are cached, so a rerun picks up where this one stopped."
+        ),
+        "Raise --delay to space requests further apart on large playlists.",
     )
 
 

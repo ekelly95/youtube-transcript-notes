@@ -245,12 +245,17 @@ Every failure carries a plain-language cause and something to try. With
 `--json` the same failure also carries a stable `code`, so a script or an agent
 can branch on `NO_CAPTIONS_AVAILABLE` rather than on English.
 
-**"Sign in to confirm you're not a bot", or every lecture failing at once.**
-YouTube blocks addresses it thinks are automated, and it treats datacenter
-ranges as automated by default. This is the commonest first-run failure and it
-is almost never about the video. Run from an ordinary home connection rather
-than a VPN, a cloud box, or a CI runner. There is no cookie or sign-in option:
-the tool has no account handling, deliberately.
+**"Sign in to confirm you're not a bot" (`BOT_CHECK`), or every video failing
+at once.** YouTube blocks addresses it thinks are automated, and it treats
+datacenter ranges as automated by default. This is the commonest first-run
+failure and it is almost never about the video. Run from an ordinary home
+connection rather than a VPN, a cloud box, or a CI runner. There is no cookie
+or sign-in option: the tool has no account handling, deliberately.
+
+**HTTP 429 (`RATE_LIMITED`).** Too many requests in too short a time. Wait
+several minutes and run the same command again — captions already fetched are
+cached, so the rerun picks up where the last one stopped. Videos in one run are
+spaced out by `--delay` (one second by default); raise it for long playlists.
 
 **Errors mentioning extraction, the player response, or a signature.**
 YouTube changed something and yt-dlp has not caught up, or your copy is old.

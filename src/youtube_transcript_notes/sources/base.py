@@ -46,6 +46,10 @@ class SourceProvider(ABC):
 
     name = "source"
 
+    #: Whether discovery reaches the network. The CLI paces remote sources so a
+    #: playlist does not arrive at the far end as a burst.
+    remote = False
+
     def __init__(
         self,
         clock: Callable[[], datetime] | None = None,

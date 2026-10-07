@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,7 @@ from .errors import (
     OutputExists,
     OutputUnwritable,
     TranscriptError,
+    UnknownProvider,
 )
 from .limits import MAX_CORRECTIONS, MAX_GLOSSARY_BYTES, read_capped
 from .models import Lecture, TrustTier
@@ -48,6 +50,13 @@ EXIT_OK = 0
 EXIT_PARTIAL = 1
 #: Nothing could be produced at all.
 EXIT_FAILED = 2
+
+#: Seconds between remote sources unless `--delay` says otherwise. A playlist
+#: fetched back to back is what YouTube's bot check is for.
+DEFAULT_DELAY = 1.0
+
+#: How the run waits between remote sources; the test suite replaces it.
+_pause = time.sleep
 
 
 @dataclass(frozen=True)
@@ -140,8 +149,14 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
             notices.append((source, expansion.stale_reason))
         sources.extend(expansion.sources)
 
+    paced = False
     for source in sources:
         try:
+            if _is_remote(fetcher, source):
+                # Between remote sources, never before the first.
+                if paced and args.delay:
+                    _pause(args.delay)
+                paced = True
             # Step by step rather than `TranscriptFetcher.fetch`, because the
             # manifest says whether this run was served from cache.
             manifest = fetcher.list(source)
@@ -170,6 +185,15 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
         failures=tuple(failures),
         notices=tuple(notices),
     )
+
+
+def _is_remote(fetcher: TranscriptFetcher, source: str) -> bool:
+    """Whether fetching `source` reaches the network, and so should be paced."""
+    try:
+        return fetcher.provider_for(source).remote
+    except UnknownProvider:
+        # `list` reports it, once, like every other per-source failure.
+        return False
 
 
 def _present(
@@ -486,6 +510,17 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Show what transcripts exist without downloading any of them.",
     )
     parser.add_argument(
+        "--delay",
+        type=float,
+        default=DEFAULT_DELAY,
+        metavar="SECONDS",
+        help=(
+            "Pause between YouTube videos in one run, so a playlist does not "
+            f"trip YouTube's bot check. Defaults to {DEFAULT_DELAY:g}; 0 turns "
+            "it off. Local files are never delayed."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit a JSON envelope, with machine-readable remedies for errors.",
@@ -533,6 +568,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--out writes lectures; --list only reports what exists")
     if args.force and args.out is None:
         parser.error("--force applies to --out, which is what writes files")
+    if args.delay < 0:
+        parser.error("--delay cannot be negative")
     if args.budget is not None and not renderers.get(args.format).takes_budget:
         # Here, not at construction, where a `TypeError` would be misreported
         # as a failed lecture.

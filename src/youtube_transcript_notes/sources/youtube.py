@@ -29,6 +29,7 @@ from ..cache import Cache
 from ..errors import (
     AcquisitionFailed,
     AgeRestricted,
+    BotCheck,
     LectureUnavailable,
     MalformedCaptions,
     NoCaptionsAvailable,
@@ -36,6 +37,7 @@ from ..errors import (
     PlaylistEmpty,
     PlaylistNotSupported,
     PlaylistTooLarge,
+    RateLimited,
     RegionBlocked,
     SourceError,
     TranscriptError,
@@ -127,6 +129,11 @@ _TRANSPORT_BROKEN_PATTERNS: tuple[str, ...] = (
 #: Well-known failure phrases. Deliberately shallow: anything unrecognised
 #: becomes `AcquisitionFailed` with the original message.
 _FAILURE_PATTERNS: tuple[tuple[str, type[SourceError]], ...] = (
+    # About the connection, not the video. Matching "not a bot" sidesteps
+    # the curly apostrophe YouTube writes in "confirm you're".
+    ("not a bot", BotCheck),
+    ("http error 429", RateLimited),
+    ("too many requests", RateLimited),
     ("confirm your age", AgeRestricted),
     ("age-restricted", AgeRestricted),
     ("inappropriate for some users", AgeRestricted),
@@ -180,6 +187,7 @@ class YouTubeProvider(SourceProvider):
     """Fetches captions and citation metadata from YouTube."""
 
     name = "youtube"
+    remote = True
 
     def __init__(
         self,

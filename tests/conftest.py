@@ -89,6 +89,19 @@ def isolate_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("YOUTUBE_TRANSCRIPT_NOTES_CACHE", str(tmp_path / "cache"))
 
 
+@pytest.fixture(autouse=True)
+def no_pacing(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record the CLI's pauses between remote sources instead of sleeping.
+
+    Returned so a test can assert on what the run *would* have waited.
+    """
+    from youtube_transcript_notes import cli
+
+    pauses: list[float] = []
+    monkeypatch.setattr(cli, "_pause", pauses.append)
+    return pauses
+
+
 #: One attack per externally-controlled field, kept together so a renderer
 #: added later can be pointed at the same fixture. Every string here is
 #: something an uploader can actually set: the title, the channel and the
