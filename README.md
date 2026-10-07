@@ -292,10 +292,12 @@ different. This is the guard that stops a lecture retitled upstream, or an
 uploader who picked your filename, from overwriting a note. Read the file
 first; if replacing it is what you want, add `--force`.
 
-**Nothing appears for a long time on a playlist.** Lectures are fetched one at
-a time and the report is printed at the end, so a large playlist is quiet while
-it works. Exit code `1` afterwards means some items failed and the rest
-succeeded — the run is not discarded because one lecture was.
+**A long playlist.** Videos are fetched one at a time, a second apart, with a
+`[n/N]` progress line on stderr as each starts. With `--out`, each note is
+written as soon as its video is done, so stopping with Ctrl-C keeps everything
+finished; run the same command again to continue. Exit code `1` afterwards
+means some items failed and the rest succeeded — the run is not discarded
+because one video was.
 
 ## Development
 

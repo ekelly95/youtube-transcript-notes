@@ -1,9 +1,10 @@
 """The command line.
 
-Three steps, in order: `_decide` works the run out without touching anything,
-`main` writes, and `_present` reports what actually happened. `run` is
-`_present(_decide(argv))`, so every test is an assertion about a returned
-value.
+`_outcomes` works each source out, one at a time, without touching anything.
+`run` collects them all and reports through `_present`, so every test is an
+assertion about a returned value. `main` consumes the same outcomes but writes
+each file as soon as its source is done, then reports once, after every
+write, so the report never claims a file that failed.
 
 A batch survives its own failures: each source is processed independently,
 and the report covers both what worked and what did not. Documents go to
@@ -17,8 +18,8 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import __version__
@@ -89,7 +90,7 @@ class CliResult:
 class _Document:
     """One lecture and the text it rendered to.
 
-    Rendered inside `_decide`'s per-source loop, so a renderer that raises
+    Rendered inside `_outcomes`' per-source loop, so a renderer that raises
     costs that one source.
     """
 
@@ -110,28 +111,53 @@ class _Decision:
     notices: tuple[tuple[str, TranscriptError], ...] = ()
 
 
+@dataclass(frozen=True)
+class _Outcome:
+    """What became of one source. Exactly one field besides `source` is set."""
+
+    source: str
+    document: _Document | None = None
+    listing: str | None = None
+    failure: TranscriptError | None = None
+    notice: TranscriptError | None = None
+
+
+#: Told the position, the total and the source, before each source is worked on.
+_Announce = Callable[[int, int, str], None]
+
+
 def run(argv: Sequence[str] | None = None) -> CliResult:
     """Decide the whole run and report it, writing nothing."""
     return _present(_decide(argv))
 
 
 def _decide(argv: Sequence[str] | None) -> _Decision:
+    """Work out the whole run without touching anything."""
     args = _parse(argv)
+    renderer = get_renderer(args.format, **_options(args))
+    planner = _Planner(args.out, renderer.extension, args.force)
+    tally = _Tally()
+    for outcome in _outcomes(args, renderer):
+        tally.add(outcome, planner.plan(outcome.document))
+    return tally.decision(renderer, args.json)
+
+
+def _outcomes(
+    args: argparse.Namespace,
+    renderer: Renderer,
+    announce: _Announce | None = None,
+) -> Iterator[_Outcome]:
+    """Every source's outcome, one at a time, so `main` can act on each at once."""
     fetcher = TranscriptFetcher(
         cache=NullCache() if args.no_cache else Cache(args.cache)
     )
-    renderer = get_renderer(args.format, **_options(args))
-
-    listings: list[str] = []
-    documents: list[_Document] = []
-    failures: list[tuple[str, TranscriptError]] = []
-    notices: list[tuple[str, TranscriptError]] = []
 
     try:
         glossary = _glossary(args)
     except TranscriptError as error:
         # Wrong for the whole run, so reported once and not charged to a source.
-        return _Decision(renderer=renderer, as_json=args.json, failures=(("", error),))
+        yield _Outcome("", failure=error)
+        return
 
     # Playlists and folders become their items first, so each item is isolated
     # exactly like a source typed by hand.
@@ -140,17 +166,19 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
         try:
             expansion = fetcher.expand(source)
         except TranscriptError as error:
-            failures.append((source, error))
+            yield _Outcome(source, failure=error)
             continue
         except Exception as error:
-            failures.append((source, _wrap(source, error)))
+            yield _Outcome(source, failure=_wrap(source, error))
             continue
         if expansion.stale_reason is not None:
-            notices.append((source, expansion.stale_reason))
+            yield _Outcome(source, notice=expansion.stale_reason)
         sources.extend(expansion.sources)
 
     paced = False
-    for source in sources:
+    for position, source in enumerate(sources, start=1):
+        if announce is not None:
+            announce(position, len(sources), source)
         try:
             if _is_remote(fetcher, source):
                 # Between remote sources, never before the first.
@@ -161,30 +189,82 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
             # manifest says whether this run was served from cache.
             manifest = fetcher.list(source)
             if manifest.stale_reason is not None:
-                notices.append((source, manifest.stale_reason))
+                yield _Outcome(source, notice=manifest.stale_reason)
 
             if args.list:
-                listings.append(_describe(manifest))
+                yield _Outcome(source, listing=_describe(manifest))
             else:
                 lecture = manifest.find(args.languages, _tiers(args)).fetch(
                     glossary=glossary
                 )
-                documents.append(_Document(lecture, renderer.render(lecture)))
+                # Rendered here, so a renderer that raises costs this source.
+                yield _Outcome(
+                    source, document=_Document(lecture, renderer.render(lecture))
+                )
         except TranscriptError as error:
-            failures.append((source, error))
+            yield _Outcome(source, failure=error)
         except Exception as error:
             # Anything unclassified still costs one source, not the batch.
-            failures.append((source, _wrap(source, error)))
+            yield _Outcome(source, failure=_wrap(source, error))
 
-    return _Decision(
-        renderer=renderer,
-        as_json=args.json,
-        listings=tuple(listings),
-        documents=tuple(documents),
-        files=_plan(args.out, renderer, documents, args.force),
-        failures=tuple(failures),
-        notices=tuple(notices),
-    )
+
+class _Planner:
+    """Names `--out` files one at a time, so no two in a run collide."""
+
+    def __init__(self, out: str | None, extension: str, overwrite: bool) -> None:
+        self._directory = Path(out) if out is not None else None
+        self._extension = extension
+        self._overwrite = overwrite
+        self._taken: set[str] = set()
+
+    def plan(self, document: _Document | None) -> OutputFile | None:
+        """The file this document goes to, or None when nothing is filed."""
+        if self._directory is None or document is None:
+            return None
+        meta = document.lecture.meta
+        name = filename_for(meta.title, meta.source_id, self._extension, self._taken)
+        self._taken.add(name.rsplit(".", 1)[0].casefold())
+        return OutputFile(self._directory / name, document.text, self._overwrite)
+
+
+class _Tally:
+    """Collects outcomes into a `_Decision`."""
+
+    def __init__(self) -> None:
+        self.listings: list[str] = []
+        self.documents: list[_Document] = []
+        self.files: list[OutputFile] = []
+        self.failures: list[tuple[str, TranscriptError]] = []
+        self.notices: list[tuple[str, TranscriptError]] = []
+
+    def add(self, outcome: _Outcome, output: OutputFile | None = None) -> None:
+        """Record one outcome, and the file planned for it if there is one.
+
+        A filed document is kept only as its file: its text is on its way to
+        disk, and a long playlist should not hold every lecture in memory.
+        """
+        if outcome.failure is not None:
+            self.failures.append((outcome.source, outcome.failure))
+        elif outcome.notice is not None:
+            self.notices.append((outcome.source, outcome.notice))
+        elif outcome.listing is not None:
+            self.listings.append(outcome.listing)
+        elif output is not None:
+            self.files.append(output)
+        else:
+            assert outcome.document is not None  # one field is always set
+            self.documents.append(outcome.document)
+
+    def decision(self, renderer: Renderer, as_json: bool) -> _Decision:
+        return _Decision(
+            renderer=renderer,
+            as_json=as_json,
+            listings=tuple(self.listings),
+            documents=tuple(self.documents),
+            files=tuple(self.files),
+            failures=tuple(self.failures),
+            notices=tuple(self.notices),
+        )
 
 
 def _is_remote(fetcher: TranscriptFetcher, source: str) -> bool:
@@ -282,29 +362,6 @@ def _corrections_file(path: Path) -> Glossary:
 def _options(args: argparse.Namespace) -> dict[str, object]:
     """Renderer options from the command line, omitted when not given."""
     return {} if args.budget is None else {"budget": args.budget}
-
-
-def _plan(
-    out: str | None,
-    renderer: Renderer,
-    documents: Sequence[_Document],
-    overwrite: bool,
-) -> tuple[OutputFile, ...]:
-    """Work out what `--out` would write, without writing any of it."""
-    if out is None:
-        return ()
-
-    directory = Path(out)
-    planned: list[OutputFile] = []
-    taken: set[str] = set()
-
-    for document in documents:
-        meta = document.lecture.meta
-        name = filename_for(meta.title, meta.source_id, renderer.extension, taken)
-        taken.add(name.rsplit(".", 1)[0].casefold())
-        planned.append(OutputFile(directory / name, document.text, overwrite))
-
-    return tuple(planned)
 
 
 def _stdout(
@@ -587,19 +644,71 @@ def _budgeted_formats() -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point, and the only place in the package that touches the world.
 
-    Reports *after* writing, so a failed write is never reported beside a
-    document already claiming success.
+    Each file is written as soon as its source is done, so an interrupted
+    playlist keeps everything it finished. The report comes after every write,
+    so it never claims a file that failed.
     """
     _speak_utf8()
-    decision = _decide(argv)
-    problems, unchanged = _write_all(decision.files)
-    result = _present(decision, problems, unchanged)
+    args = _parse(argv)
+    renderer = get_renderer(args.format, **_options(args))
+    planner = _Planner(args.out, renderer.extension, args.force)
+    tally = _Tally()
+    problems: list[tuple[str, TranscriptError]] = []
+    unchanged: set[str] = set()
+    interrupted = False
+
+    try:
+        for outcome in _outcomes(args, renderer, announce=_announcer(args)):
+            output = planner.plan(outcome.document)
+            if output is not None:
+                problem, same = _write_one(output)
+                if problem is not None:
+                    problems.append((str(output.path), problem))
+                elif same:
+                    unchanged.add(str(output.path))
+                # On disk now; keep where it went, not the whole text.
+                output = replace(output, text="")
+            tally.add(outcome, output)
+    except KeyboardInterrupt:
+        interrupted = True
+
+    decision = tally.decision(renderer, args.json)
+    result = _present(decision, problems, frozenset(unchanged))
 
     if result.report:
         print(result.report, file=sys.stderr)
     if result.text:
         print(result.text)
+    if interrupted:
+        print(_INTERRUPTED, file=sys.stderr)
+        return EXIT_INTERRUPTED
     return result.exit_code
+
+
+#: Exit code after Ctrl-C, by shell convention (128 + SIGINT).
+EXIT_INTERRUPTED = 130
+
+_INTERRUPTED = (
+    "Interrupted. Every file reported above is complete. Run the same command "
+    "again to finish: fetched captions are cached, and finished notes come "
+    "back unchanged."
+)
+
+
+def _announcer(args: argparse.Namespace) -> _Announce | None:
+    """Progress on stderr, one line as each source starts.
+
+    Silent for a single source, where the result follows at once, and under
+    `--json`, which promises one document and nothing else.
+    """
+    if args.json:
+        return None
+
+    def announce(position: int, total: int, source: str) -> None:
+        if total > 1:
+            print(f"[{position}/{total}] {source}", file=sys.stderr, flush=True)
+
+    return announce
 
 
 def _speak_utf8() -> None:
@@ -615,43 +724,24 @@ def _speak_utf8() -> None:
             reconfigure(encoding="utf-8")
 
 
-def _write_all(
-    files: Sequence[OutputFile],
-) -> tuple[tuple[tuple[str, TranscriptError], ...], frozenset[str]]:
-    """Write every planned file; report what was refused, and what was already so.
+def _write_one(output: OutputFile) -> tuple[TranscriptError | None, bool]:
+    """Write one planned file: the problem if it was refused, and whether the
+    file already said exactly this.
 
-    Problems take the shape of a failed fetch, so they reach stderr, the JSON
+    A problem takes the shape of a failed fetch, so it reaches stderr, the JSON
     envelope and the exit code through the same machinery.
     """
-    problems: list[tuple[str, TranscriptError]] = []
-    unchanged: set[str] = set()
-
-    for output in files:
-        where = str(output.path)
-        try:
-            if not _write(output):
-                unchanged.add(where)
-        except FileExistsError:
-            problems.append((where, OutputExists(path=where)))
-        except OSError as error:
-            problems.append(
-                (
-                    where,
-                    OutputUnwritable(path=where, detail=error.strerror or str(error)),
-                )
-            )
-        except Exception as error:
-            # The last resort, as in `_decide`: one bad write costs one file.
-            problems.append(
-                (
-                    where,
-                    OutputUnwritable(
-                        path=where, detail=redact(f"{type(error).__name__}: {error}")
-                    ),
-                )
-            )
-
-    return tuple(problems), frozenset(unchanged)
+    where = str(output.path)
+    try:
+        return None, not _write(output)
+    except FileExistsError:
+        return OutputExists(path=where), False
+    except OSError as error:
+        return OutputUnwritable(path=where, detail=error.strerror or str(error)), False
+    except Exception as error:
+        # The last resort, as in `_outcomes`: one bad write costs one file.
+        detail = redact(f"{type(error).__name__}: {error}")
+        return OutputUnwritable(path=where, detail=detail), False
 
 
 def _write(output: OutputFile) -> bool:

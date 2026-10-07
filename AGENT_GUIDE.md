@@ -22,8 +22,10 @@ left behind after its original was removed.
    the source published, including repetition.
 5. Truncation is always reported. Every file, URL, cache entry, decoded event
    list, playlist, and output path has a tested ceiling.
-6. `_decide` plans, `main` performs writes, and `_present` reports what actually
-   happened. Documents use stdout; diagnostics use stderr.
+6. `_outcomes` decides each source without touching anything; `main` writes
+   each file as its source finishes; `_present` reports once, after every
+   write. `run` is the same decisions with no writes. Documents use stdout;
+   diagnostics and progress use stderr.
 7. Report `NoCaptionsAvailable` only after the source positively says so.
    Missing upstream fields are compatibility failures; a fetched track with no
    usable text is `EmptyTranscript`.
@@ -62,7 +64,7 @@ left behind after its original was removed.
   reports a caption problem. Never cache signed caption URLs.
 - Register the local provider first so an existing path beats an ambiguous
   eleven-character video ID.
-- Render inside `_decide`'s per-source loop, so a lecture that fetches but
+- Render inside `_outcomes`' per-source loop, so a lecture that fetches but
   will not render costs that one lecture. `render_many` is the renderer's
   declared `separator` joining single renders; a test pins the two equal.
 

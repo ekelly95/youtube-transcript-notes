@@ -470,6 +470,102 @@ class TestPacing:
             run([SOURCE, "--delay", "-1"])
 
 
+def _course(directory: Path, weeks: int = 3) -> Path:
+    """A folder of caption files, one lecture per week."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for week in range(1, weeks + 1):
+        (directory / f"week-{week:02d}.en.json3").write_text(
+            load_caption("mit6006-lec1.manual.en.json3"), encoding="utf-8"
+        )
+    return directory
+
+
+class TestFilesLandAsTheRunGoes:
+    """A long playlist writes each note when it is done, says where it is, and
+    keeps everything finished when interrupted."""
+
+    def test_progress_is_announced_on_stderr_for_a_batch(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        course = _course(tmp_path / "course")
+
+        assert main([str(course), "--out", str(tmp_path / "notes")]) == EXIT_OK
+        captured = capsys.readouterr()
+
+        assert "[1/3] " in captured.err
+        assert "[3/3] " in captured.err
+        assert "[1/3]" not in captured.out
+
+    def test_a_single_source_is_not_announced(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        main([SOURCE, "--format", "plain"])
+
+        assert "[1/1]" not in capsys.readouterr().err
+
+    def test_json_stays_one_document(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        course = _course(tmp_path / "course")
+
+        main([str(course), "--json"])
+        captured = capsys.readouterr()
+
+        assert captured.err == ""
+        assert json.loads(captured.out)["ok"] is True
+
+    def test_each_file_is_written_before_the_next_source_starts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from youtube_transcript_notes import TranscriptFetcher
+
+        course = _course(tmp_path / "course")
+        notes = tmp_path / "notes"
+        seen: list[int] = []
+        original = TranscriptFetcher.list
+
+        def watching(self, source: str):
+            seen.append(len(list(notes.glob("*.md"))) if notes.exists() else 0)
+            return original(self, source)
+
+        monkeypatch.setattr(TranscriptFetcher, "list", watching)
+
+        assert main([str(course), "--out", str(notes)]) == EXIT_OK
+        assert seen == [0, 1, 2]
+
+    def test_an_interrupt_keeps_the_finished_files_and_says_so(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        from youtube_transcript_notes import TranscriptFetcher
+
+        course = _course(tmp_path / "course")
+        notes = tmp_path / "notes"
+        original = TranscriptFetcher.list
+        calls = 0
+
+        def interrupted_on_the_third(self, source: str):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise KeyboardInterrupt
+            return original(self, source)
+
+        monkeypatch.setattr(TranscriptFetcher, "list", interrupted_on_the_third)
+
+        assert main([str(course), "--out", str(notes)]) == cli.EXIT_INTERRUPTED
+        captured = capsys.readouterr()
+
+        assert len(list(notes.glob("*.md"))) == 2
+        assert captured.out.count("wrote ") == 2
+        assert "Interrupted" in captured.err
+
+    def test_run_still_holds_every_document_when_nothing_is_filed(self) -> None:
+        """`run` is the pure path: without --out, the documents are the output."""
+        result = run([SOURCE, SOURCE, "--format", "plain"])
+
+        assert result.text.count("Creative Commons license") == 2
+
+
 class TestServedFromCacheIsAnnounced:
     """A run the transport could not reach must not look like one that did.
 
