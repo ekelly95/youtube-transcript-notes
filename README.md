@@ -1,7 +1,7 @@
 # youtube-transcript-notes
 
-Turn captioned lecture videos into readable notes and grounded summaries with
-clickable timestamps.
+Turn captioned videos — lectures, talks, podcasts, interviews — into readable
+notes and grounded summaries with clickable timestamps.
 
 Give Claude Code or Codex a YouTube URL and ask for notes or a summary. The
 bundled skill finds the best available captions, records how trustworthy they
@@ -95,9 +95,10 @@ Srini Devadas. I'm a professor of electrical engineering and computer science…
   rewrites a transcript.
 - Handles videos, playlists, caption files, and folders with per-item failure
   isolation.
-- Caches captions and metadata so previously fetched lectures remain available
+- Caches captions and metadata so previously fetched videos remain available
   during a YouTube or yt-dlp outage.
-- Refuses to replace an existing, different note unless `--force` is explicit.
+- Refuses to replace a note it did not write unless `--force` is explicit; its
+  own notes are updated in place.
 
 ## CLI
 
@@ -125,7 +126,7 @@ python -m youtube_transcript_notes HtSuA80QTyo --list
 # Prefer German, then English
 python -m youtube_transcript_notes HtSuA80QTyo --languages de en
 
-# Process a playlist or a folder into one file per lecture
+# Process a playlist or a folder into one file per video
 python -m youtube_transcript_notes <playlist-url> --out notes/course
 python -m youtube_transcript_notes ~/Downloads/course-captions --out notes/course
 
@@ -168,7 +169,7 @@ A note may also carry two marks of the captioner's own uncertainty:
 `(inaudible)` where they could not make the words out, and `(?)` after a word
 they guessed at — `a cure(?)` keeps the guess with the doubt attached.
 
-The lecture title and chapter headings provide an initial spelling glossary.
+The video title and chapter headings provide an initial spelling glossary.
 Add recurring acoustic errors with `--glossary`:
 
 ```text
@@ -183,7 +184,7 @@ python -m youtube_transcript_notes <source> --glossary names.txt
 
 The repository carries a starter list at
 [`names.txt`](https://github.com/ekelly95/youtube-transcript-notes/blob/main/names.txt).
-It is entirely agent-engineering vocabulary, so on a lecture from another field
+It is entirely agent-engineering vocabulary, so on a video from another field
 it is a template rather than a list. An installed copy does not include it.
 
 `--corrections found.json` accepts a list of `wrong`, `right`, and optional
@@ -222,11 +223,11 @@ The default cache is:
   `~/.cache/youtube-transcript-notes` when that variable is unset
 
 Use `YOUTUBE_TRANSCRIPT_NOTES_CACHE`, `--cache`, or `--no-cache` to override it.
-When yt-dlp cannot reach YouTube, cached lectures remain usable and are clearly
+When yt-dlp cannot reach YouTube, cached videos remain usable and are clearly
 reported as stale. Updating yt-dlp is the usual repair for upstream changes.
 
 The cache is an optimisation and never a reason for a run to fail: if it cannot
-be written — a full disk, a read-only directory — the lecture is still produced
+be written — a full disk, a read-only directory — the note is still produced
 and the next run simply fetches again.
 
 ## Python API
@@ -271,7 +272,7 @@ spaced out by `--delay` (one second by default); raise it for long playlists.
 **Errors mentioning extraction, the player response, or a signature.**
 YouTube changed something and yt-dlp has not caught up, or your copy is old.
 These are reported as `TRANSPORT_CONTRACT_CHANGED` rather than as a problem
-with the lecture, because the lecture is usually fine:
+with the video, because the video is usually fine:
 
 ```bash
 .venv/Scripts/python -m pip install -U "yt-dlp[default]"
@@ -294,12 +295,12 @@ If you can obtain a transcript as a caption file from anywhere else — a course
 platform, or a separate transcription tool — pass that file's path as the
 source instead.
 
-**Age-restricted or region-blocked lectures** cannot be retrieved. Both are
+**Age-restricted or region-blocked videos** cannot be retrieved. Both are
 reported by name rather than as a generic failure, so you can tell them from a
 video that was deleted.
 
 **"refusing to replace".** The output file already exists and holds something
-different. This is the guard that stops a lecture retitled upstream, or an
+different. This is the guard that stops a video retitled upstream, or an
 uploader who picked your filename, from overwriting a note. Read the file
 first; if replacing it is what you want, add `--force`.
 

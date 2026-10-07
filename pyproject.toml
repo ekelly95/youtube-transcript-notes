@@ -6,12 +6,12 @@ build-backend = "hatchling.build"
 name = "youtube-transcript-notes"
 # Keep package metadata and `--version` on one source of truth.
 dynamic = ["version"]
-description = "Turn lecture videos into readable, citable study material."
+description = "Turn captioned videos — lectures, talks, podcasts — into readable, citable notes."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["lecture", "transcript", "captions", "citation", "study-notes"]
+keywords = ["youtube", "transcript", "captions", "lecture", "podcast", "citation", "study-notes", "obsidian"]
 dependencies = []
 classifiers = [
     "Development Status :: 4 - Beta",

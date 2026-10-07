@@ -502,7 +502,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="youtube-transcript-notes",
         description=(
-            "Turn lecture videos into readable, citable study material. "
+            "Turn captioned videos into readable, citable notes. "
             "Accepts YouTube URLs, video IDs and playlist URLs, and paths to "
             "caption files."
         ),
@@ -565,10 +565,11 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         default=None,
         metavar="DIR",
         help=(
-            "Write one file per lecture into DIR instead of printing the "
-            "documents. Each is named from the lecture title and carries the "
+            "Write one file per video into DIR instead of printing the "
+            "documents. Each is named from the video title and id, with the "
             "format's own extension. The directory is created if needed. A "
-            "file already at that name is left alone unless --force."
+            "note this tool wrote for the same video is updated; anything "
+            "else at that name is left alone unless --force."
         ),
     )
     parser.add_argument(
@@ -642,7 +643,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     if args.out is not None and args.list:
-        parser.error("--out writes lectures; --list only reports what exists")
+        parser.error("--out writes notes; --list only reports what exists")
     if args.force and args.out is None:
         parser.error("--force applies to --out, which is what writes files")
     if args.delay < 0:
