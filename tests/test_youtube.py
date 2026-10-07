@@ -19,6 +19,7 @@ from youtube_transcript_notes.cache import Cache, NullCache
 from youtube_transcript_notes.errors import (
     AcquisitionFailed,
     AgeRestricted,
+    BotCheck,
     LectureUnavailable,
     MalformedCaptions,
     NoCaptionsAvailable,
@@ -26,7 +27,9 @@ from youtube_transcript_notes.errors import (
     PlaylistEmpty,
     PlaylistNotSupported,
     PlaylistTooLarge,
+    RateLimited,
     RegionBlocked,
+    SourceError,
     TrackNotFound,
     TransportContractChanged,
 )
@@ -977,10 +980,34 @@ class TestFailureClassification:
                 "The uploader has not made this video available in your country",
                 RegionBlocked,
             ),
+            # YouTube's own text, curly apostrophe (U+2019) and all.
+            (
+                (
+                    "ERROR: [youtube] HtSuA80QTyo: Sign in to confirm you\u2019re "
+                    "not a bot. Use --cookies-from-browser or --cookies for the "
+                    "authentication."
+                ),
+                BotCheck,
+            ),
+            ("Sign in to confirm you're not a bot", BotCheck),
+            ("HTTP Error 429: Too Many Requests", RateLimited),
+            ("Too many requests, slow down", RateLimited),
         ],
     )
     def test_known_failures_are_named(self, message: str, expected: type) -> None:
         assert isinstance(_classify(VIDEO_ID, RuntimeError(message)), expected)
+
+    @pytest.mark.parametrize("failure", [BotCheck, RateLimited])
+    def test_connection_failures_fall_back_to_the_cache(self, failure: type) -> None:
+        """Both are `SourceError`s: the video was not reached, so a cached
+        manifest is still the best answer."""
+        assert issubclass(failure, SourceError)
+
+    def test_connection_failures_do_not_advise_an_immediate_retry(self) -> None:
+        for failure in (BotCheck, RateLimited):
+            advice = " ".join(failure(source=VIDEO_ID).remedy["try"]).lower()
+            assert "--delay" in advice
+            assert not advice.startswith("retry")
 
     def test_an_unrecognised_failure_keeps_its_detail(self) -> None:
         # Better an honest "something went wrong, here is what it said" than a
@@ -1193,7 +1220,7 @@ class TestTransportContract:
 
         assert remedy["code"] == "TRANSPORT_CONTRACT_CHANGED"
         assert remedy["context"]["version"]
-        assert any("pip install -U yt-dlp" in step for step in remedy["try"])
+        assert any('install -U "yt-dlp[default]"' in step for step in remedy["try"])
 
 
 class TestTransportBreakageIsNotTheLecturesFault:
@@ -1216,7 +1243,9 @@ class TestTransportBreakageIsNotTheLecturesFault:
         failure = _classify(VIDEO_ID, RuntimeError(message))
 
         assert isinstance(failure, TransportContractChanged)
-        assert any("pip install -U yt-dlp" in step for step in failure.remedy["try"])
+        assert any(
+            'install -U "yt-dlp[default]"' in step for step in failure.remedy["try"]
+        )
 
     def test_breakage_wins_over_a_message_that_looks_like_a_dead_video(self) -> None:
         """Order matters, and this is why it is written down.
@@ -1342,6 +1371,53 @@ class TestTransportIsBounded:
         assert params["socket_timeout"] > 0
         assert params["retries"] >= 1
         assert params["extractor_retries"] >= 1
+
+
+class TestJavaScriptRuntime:
+    """yt-dlp needs a JS runtime for YouTube since 2025.11.12, and only enables
+    Deno by default. Node is far more often installed already."""
+
+    def test_every_supported_runtime_is_enabled(self) -> None:
+        from youtube_transcript_notes.sources.youtube import _youtube_dl
+
+        runtimes = _youtube_dl().params["js_runtimes"]
+
+        assert {"deno", "node", "bun"} <= set(runtimes)
+
+    def test_no_hint_when_a_runtime_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from youtube_transcript_notes.sources import youtube
+
+        monkeypatch.setattr(
+            youtube.shutil,
+            "which",
+            lambda name: "/usr/bin/node" if name == "node" else None,
+        )
+        failure = _classify(VIDEO_ID, RuntimeError("nsig extraction failed"))
+
+        assert failure.also_try == ()
+        assert "JavaScript" not in str(failure)
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("nsig extraction failed", TransportContractChanged),
+            ("HTTP 503 from the CDN", AcquisitionFailed),
+        ],
+    )
+    def test_the_hint_appears_when_no_runtime_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch, message: str, expected: type
+    ) -> None:
+        from youtube_transcript_notes.sources import youtube
+
+        monkeypatch.setattr(youtube.shutil, "which", lambda name: None)
+        failure = _classify(VIDEO_ID, RuntimeError(message))
+
+        assert isinstance(failure, expected)
+        # Last, after the standing advice, in both the prose and the remedy.
+        assert "JavaScript runtime" in failure.remedy["try"][-1]
+        assert "Deno" in str(failure)
 
 
 class TestSurvivingAnOutage:

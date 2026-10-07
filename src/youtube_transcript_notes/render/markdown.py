@@ -1,15 +1,17 @@
-"""Markdown study notes with a timestamp on every paragraph.
+"""Markdown notes with a timestamp on every paragraph — the default output.
 
-The default output, and the one the whole design is really for: readable
-prose where any sentence can be traced back to the moment it was said, in one
-click.
+Any sentence can be traced back to the moment it was said, in one click. A
+YAML frontmatter block carries the citation fields for notes apps (Obsidian
+properties, Dataview) and lets the CLI recognise a note it wrote itself.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Sequence
 
+from .._version import __version__
 from ..models import (
     Correction,
     Lecture,
@@ -22,7 +24,16 @@ from ..models import (
 from .base import Renderer, renderers
 from .escape import body, body_resumed, label, safe_url
 
-__all__ = ["MarkdownRenderer"]
+__all__ = ["GENERATOR", "MarkdownRenderer", "read_frontmatter"]
+
+#: How a note names the tool that wrote it, in its `generator` field.
+GENERATOR = "youtube-transcript-notes"
+
+#: Without published chapters, a heading every this many seconds...
+_TIME_HEADING_SECONDS = 600
+
+#: ...once the transcript runs at least this long. Shorter ones read fine whole.
+_TIME_HEADING_MIN_SPAN = 1200
 
 
 @renderers.register("markdown", "md")
@@ -32,26 +43,125 @@ class MarkdownRenderer(Renderer):
     extension = "md"
 
     def render(self, lecture: Lecture) -> str:
-        # Every interpolation below is `label`d or `body`d. The title, the
-        # channel, the chapter names and the transcript were all written by
-        # whoever published the lecture; see `render.escape`.
-        lines = [f"# {label(lecture.meta.title)}", ""]
+        lines = _frontmatter(lecture)
+        # Every interpolation is `label`d or `body`d: it is the uploader's text.
+        lines += [f"# {label(lecture.meta.title)}", ""]
         lines += [_byline(lecture.meta, lecture.provenance), ""]
 
         marker = _marker(lecture.corrections)
-        # A second annotator for speaker labels, escaping with `label`: a name
-        # is a single line wherever it appears, and captions get it wrong in
-        # the label as often as in the prose.
+        # Speaker labels are single-line, so they escape with `label`.
         named = _marker(lecture.corrections, escape=label, resume=label)
+        timed = _wants_time_headings(lecture)
+        next_heading = 0.0
         for section in lecture.sections:
             if section.title:
                 lines += [f"## {label(section.title)}", ""]
             for passage in section.passages:
-                stamp = _stamp(lecture.locator_for(passage, section))
+                locator = lecture.locator_for(passage, section)
+                if timed and passage.start >= next_heading:
+                    lines += [f"## {_heading_stamp(locator)}", ""]
+                    next_heading = _next_boundary(passage.start)
+                stamp = _stamp(locator)
                 lines += [f"{stamp}{_who(passage, named)} {marker(passage.text)}", ""]
 
         lines += _corrections(lecture.corrections)
         return "\n".join(lines).rstrip() + "\n"
+
+
+def _wants_time_headings(lecture: Lecture) -> bool:
+    """Whether a long transcript arrived with no chapters to structure it.
+
+    The headings are timestamps only: the tool states where it is, and never
+    invents what a stretch is about.
+    """
+    if len(lecture.sections) != 1 or lecture.sections[0].title is not None:
+        return False
+    section = lecture.sections[0]
+    return section.end - section.start >= _TIME_HEADING_MIN_SPAN
+
+
+def _next_boundary(moment: float) -> float:
+    """The first heading boundary strictly after `moment`."""
+    return (moment // _TIME_HEADING_SECONDS + 1) * _TIME_HEADING_SECONDS
+
+
+def _heading_stamp(locator: Locator) -> str:
+    """A timestamp heading, linked when the source supports deep links."""
+    url = safe_url(locator.url)
+    return f"[{locator.timestamp}]({url})" if url else locator.timestamp
+
+
+def _frontmatter(lecture: Lecture) -> list[str]:
+    """The YAML block that opens a note.
+
+    Deterministic — no retrieval time — so a rerun is byte-identical and
+    reports `unchanged`. Absent fields are omitted rather than left empty.
+    """
+    meta, provenance = lecture.meta, lecture.provenance
+    fields = [("title", _scalar(meta.title)), ("source_id", _scalar(meta.source_id))]
+    url = safe_url(meta.url)
+    if url:
+        fields.append(("url", _scalar(url)))
+    if meta.channel:
+        fields.append(("channel", _scalar(meta.channel)))
+    if meta.published:
+        # Unquoted, so notes apps read it as a date rather than a string.
+        fields.append(("published", meta.published.isoformat()))
+    fields += [
+        ("tier", _scalar(provenance.tier.value)),
+        ("language", _scalar(provenance.language)),
+        ("generator", _scalar(f"{GENERATOR} {__version__}")),
+    ]
+    return ["---", *(f"{key}: {value}" for key, value in fields), "---", ""]
+
+
+#: Characters Markdown acts on, escaped inside frontmatter values too: a viewer
+#: that does not understand frontmatter renders the block as ordinary text.
+_ACTIVE_IN_FRONTMATTER = frozenset("<>[]`")
+
+
+def _scalar(value: str) -> str:
+    """A YAML double-quoted scalar that holds `value` exactly, whatever it is.
+
+    JSON strings are valid YAML double-quoted scalars, and `json.dumps` already
+    escapes quotes, backslashes and control characters, so an uploader's title
+    cannot close the string or the block. Anything YAML would not accept raw —
+    a line separator, a C1 control — and anything Markdown would act on is
+    escaped as well, so the block is inert even where it is not understood.
+    """
+    return "".join(_inert(char) for char in json.dumps(value, ensure_ascii=False))
+
+
+def _inert(char: str) -> str:
+    if char in _ACTIVE_IN_FRONTMATTER:
+        return "\\u" + format(ord(char), "04x")
+    if not char.isprintable():
+        return char.encode("unicode_escape").decode("ascii")
+    return char
+
+
+def read_frontmatter(text: str) -> dict[str, str]:
+    """The quoted string fields of a note's frontmatter, as `_frontmatter` wrote them.
+
+    Not a YAML parser: it reads back this renderer's own output and ignores
+    everything else, which is all the CLI's overwrite guard needs. An opening
+    ``---`` that is never closed is not a frontmatter block.
+    """
+    lines = text.split("\n")
+    if lines[0] != "---":
+        return {}
+
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        if line == "---":
+            return fields
+        key, separator, value = line.partition(": ")
+        if separator and value.startswith('"'):
+            try:
+                fields[key] = json.loads(value)
+            except ValueError:
+                continue
+    return {}
 
 
 def _marker(
@@ -59,38 +169,20 @@ def _marker(
     escape: Callable[[str], str] = body,
     resume: Callable[[str], str] = body_resumed,
 ) -> Callable[[str], str]:
-    """A function that escapes some text and notes the corrections inside it.
+    """A function that escapes text and notes the corrections inside it.
 
-    The correction goes *beside* the words rather than over them — "quad code
-    [Claude Code]" — so the transcript still says what the recording says and
-    stays searchable for it. A reader who disagrees with a correction can see
-    exactly what they are disagreeing with.
-
-    The brackets are the tool's own, which is the only reason they can be
-    brackets at all: `escape` neutralises every one that came from the source,
-    and the replacement goes through `label` on its way in, so a correction
-    from a file somebody else wrote cannot open markup either.
-
-    `escape` covers the first piece, `resume` everything after an annotation —
-    prose needs the mid-line distinction (see `body_resumed`); a single-line
-    speaker label passes `label` for both.
+    The correction goes *beside* the words — "quad code [Claude Code]" — so the
+    transcript still says what the recording says. The brackets are the tool's
+    own: source brackets are escaped, and the replacement goes through `label`.
+    `escape` covers the first piece, `resume` everything after an annotation.
     """
     if not corrections:
         return escape
 
-    # Longest first, so "Quad Code" is not matched as "Code" by a shorter
-    # entry that happens to sit inside it.
+    # Longest first, so "Quad Code" is not matched as "Code".
     ordered = sorted(corrections, key=lambda c: len(c.wrong), reverse=True)
-    # One capture group per correction, rather than one group and a lookup
-    # from the matched text: case-insensitive matching and `casefold` are not
-    # quite the same function, so a lookup needs a "what if it is missing"
-    # branch that cannot be reached or tested. `lastgroup` needs no such
-    # branch, because the group that matched *is* the correction.
-    #
-    # Keyed by `str | None` because that is `lastgroup`'s declared type. Every
-    # alternative in the pattern below is a named group, so a match reaching the
-    # lookup always names one — writing the key type honestly costs nothing,
-    # where a `or ""` guard would add a branch no test could reach.
+    # One named group per correction, so the group that matched *is* the
+    # correction — no case-folding lookup that could miss.
     right: dict[str | None, str] = {f"c{n}": c.right for n, c in enumerate(ordered)}
     alternatives = "|".join(
         f"(?P<c{n}>{re.escape(c.wrong)})" for n, c in enumerate(ordered)
@@ -102,8 +194,6 @@ def _marker(
         at = 0
         for found in pattern.finditer(text):
             piece = text[at : found.end()]
-            # Pieces after the first resume mid-line, where a leading `--` is
-            # punctuation and not a heading underline — see `body_resumed`.
             out.append(escape(piece) if at == 0 else resume(piece))
             out.append(f" [{label(right[found.lastgroup])}]")
             at = found.end()
@@ -115,12 +205,7 @@ def _marker(
 
 
 def _corrections(corrections: Sequence[Correction]) -> list[str]:
-    """The appendix: every correction, once, with what it rests on.
-
-    Present because the inline marks answer "what should this say" and not
-    "how much of this document has been second-guessed", which is the question
-    a reader deciding whether to quote the thing actually has.
-    """
+    """The appendix: every correction, once, with what it rests on."""
     if not corrections:
         return []
 
@@ -145,21 +230,11 @@ def _corrections(corrections: Sequence[Correction]) -> list[str]:
 
 
 def _who(passage: Passage, named: Callable[[str], str]) -> str:
-    """The speaker, when this passage is where they take over.
+    """The speaker, on the passage where they take over.
 
-    Only on the passage that opens a turn: a long answer runs to several
-    paragraphs, and repeating the name on each of them reads like a new person
-    interrupting every forty seconds. An anonymous turn gets the dash that
-    printed dialogue has always used, because `>>` asserts that the speaker
-    changed and nothing whatever about who they are.
-
-    `named` is the correction marker for labels, so a name the recogniser got
-    wrong is annotated here exactly as it is in the prose — a note corrected
-    in one place and wrong in the other reads as two different people. It only
-    fires for names the correction scan actually found, which means a name
-    appearing *solely* as a label stays as published: corrections are proposed
-    from passage text, and inventing one for a string no passage contains is
-    the kind of guess this pipeline refuses.
+    An anonymous turn gets a dash, as printed dialogue does. Names are marked
+    with the same corrections as the prose, so one person is not spelled two
+    ways.
     """
     if not passage.turn:
         return ""
@@ -169,13 +244,10 @@ def _who(passage: Passage, named: Callable[[str], str]) -> str:
 
 
 def _byline(meta: LectureMeta, provenance: Provenance) -> str:
-    """Attribution line: who, when, where to watch it — and what the text is.
+    """Who, when, where to watch it — and what the text is made of.
 
-    The trust tier rides here because the note is where a reader decides
-    whether to quote, and a transcript that never says it was a machine's
-    guess reads as though a person wrote it down. Always present, so the
-    byline never collapses to nothing: a local caption file with no channel,
-    date or URL still states what its text is made of.
+    The trust tier is always present, so a machine's guess never reads as
+    though a person wrote it down.
     """
     parts = []
     if meta.channel:
@@ -190,12 +262,7 @@ def _byline(meta: LectureMeta, provenance: Provenance) -> str:
 
 
 def _stamp(locator: Locator) -> str:
-    """Bold timestamp, linked when the source supports deep links.
-
-    The link is checked, not just the byline's. `Locator` builds every deep
-    link on `meta.url`, so an unusable source URL would otherwise appear once
-    per passage instead of once per document.
-    """
+    """Bold timestamp, linked when the source supports deep links."""
     url = safe_url(locator.url)
     if url:
         return f"**[{locator.timestamp}]({url})**"

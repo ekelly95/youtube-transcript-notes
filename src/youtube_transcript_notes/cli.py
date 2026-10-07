@@ -1,32 +1,15 @@
 """The command line.
 
-Three properties matter more than the argument list.
+`_outcomes` works each source out, one at a time, without touching anything.
+`run` collects them all and reports through `_present`, so every test is an
+assertion about a returned value. `main` consumes the same outcomes but writes
+each file as soon as its source is done, then reports once, after every
+write, so the report never claims a file that failed.
 
-`run` returns its output instead of printing it, so the whole command is
-testable without capturing stdout. It returns an exit code alongside the text,
-so a failed lecture is never indistinguishable from a successful one to
-anything downstream.
-
-`run` also *decides* what to write without writing it. `--out` produces a
-tuple of `OutputFile`, and `main` is still the only function in the package
-that touches the world. That keeps every test here an assertion about a
-returned value, and it means the file naming can be checked without a
-filesystem.
-
-It is three steps rather than two, and the order is the point: `_decide` works
-the run out, `main` writes, `_present` reports. Reporting used to come before
-writing, so a failed write landed as loose prose beside a document already
-saying `wrote …` — and under `--json`, beside `"ok": true` listing a file that
-was never created, with the real failure on a stream that mode promises not to
-use. Deciding still touches nothing, so `run` is `_present(_decide(argv))` and
-every test here is still an assertion about a returned value.
-
-And a batch survives its own failures. Lectures are processed one at a time,
-errors are collected, and the run reports both what worked and what did not.
-Losing forty-nine transcripts because the fiftieth video was taken down is not
-a reasonable way to spend ten minutes. Failures go to stderr and documents to
-stdout, so redirecting the output cannot smuggle an error message into the
-middle of someone's notes.
+A batch survives its own failures: each source is processed independently,
+and the report covers both what worked and what did not. Documents go to
+stdout and failures to stderr, so redirecting output cannot bury an error in
+someone's notes.
 """
 
 from __future__ import annotations
@@ -34,14 +17,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import __version__
 from .api import TranscriptFetcher
 from .atomic import atomic_write
-from .cache import Cache, NullCache
+from .cache import Cache, NullCache, RefreshCache
 from .errors import (
     AcquisitionFailed,
     InputUnreadable,
@@ -49,6 +33,7 @@ from .errors import (
     OutputExists,
     OutputUnwritable,
     TranscriptError,
+    UnknownProvider,
 )
 from .limits import MAX_CORRECTIONS, MAX_GLOSSARY_BYTES, read_capped
 from .models import Lecture, TrustTier
@@ -56,43 +41,57 @@ from .naming import filename_for
 from .redact import redact
 from .refine import Glossary, read_corrections, read_glossary
 from .render import Renderer, get_renderer, renderers
+from .render.markdown import GENERATOR, read_frontmatter
 from .resolve import TrackManifest
 
 __all__ = ["CliResult", "OutputFile", "main", "run"]
 
 #: Everything succeeded.
 EXIT_OK = 0
-#: At least one lecture failed, but the run continued and reported the rest.
+#: At least one source failed, but the run continued and reported the rest.
 EXIT_PARTIAL = 1
 #: Nothing could be produced at all.
 EXIT_FAILED = 2
 
+#: Seconds between remote sources unless `--delay` says otherwise. A playlist
+#: fetched back to back is what YouTube's bot check is for.
+DEFAULT_DELAY = 1.0
+
+#: How the run waits between remote sources; the test suite replaces it.
+_pause = time.sleep
+
+#: What a write did: created or replaced (with --force), left identical, or
+#: replaced this tool's own earlier note for the same video.
+WROTE, UNCHANGED, UPDATED = "wrote", "unchanged", "updated"
+
+#: How much of a file in the way is read to find its frontmatter.
+_FRONTMATTER_PROBE = 4096
+
 
 @dataclass(frozen=True)
 class OutputFile:
-    """A document `run` decided to write and `main` actually writes.
-
-    Splitting the decision from the effect is what keeps `run` a pure function
-    of its arguments: the path and the text are both worked out in advance, so
-    a `--out` run can be asserted on without a directory existing anywhere.
-    """
+    """A document `run` decided to write and `main` actually writes."""
 
     path: Path
     text: str
 
     overwrite: bool = False
-    """Whether this may replace a file already at `path`. False unless
-    ``--force``, and false by default so a hand-built `OutputFile` is the safe
-    one: the tool keeps no record of which files are its own, so anything
-    already at that name is somebody's, and the writer refuses rather than
-    guessing whose."""
+    """Whether this may replace any file already at `path`. False unless
+    ``--force``, so a hand-built `OutputFile` is the safe one."""
+
+    source_id: str | None = None
+    """The video this note is for, when that identity is global.
+
+    A note this tool wrote earlier for the same id may be replaced without
+    ``--force``. Set only for sources with a URL: a YouTube id names one video
+    everywhere, while a local file's stem can recur in another folder.
+    """
 
 
 @dataclass(frozen=True)
 class CliResult:
     text: str
-    """What belongs on stdout — documents, a listing, or a note of what was
-    written."""
+    """What belongs on stdout — documents, a listing, or what was written."""
 
     exit_code: int
 
@@ -100,18 +99,15 @@ class CliResult:
     """Documents for `main` to write. Empty unless ``--out`` was given."""
 
     report: str = ""
-    """What belongs on stderr. Failures live here so that redirecting stdout
-    into a file cannot bury an error inside the notes."""
+    """What belongs on stderr: failures and notices."""
 
 
 @dataclass(frozen=True)
 class _Document:
     """One lecture and the text it rendered to.
 
-    Rendered inside `_decide`'s per-source loop — the only place that still
-    knows which source produced the lecture — so a renderer that raises costs
-    that one lecture and is charged to its source, exactly like a failed
-    fetch. Rendering is pure, so `_decide` still touches nothing.
+    Rendered inside `_outcomes`' per-source loop, so a renderer that raises
+    costs that one source.
     """
 
     lecture: Lecture
@@ -120,13 +116,7 @@ class _Document:
 
 @dataclass(frozen=True)
 class _Decision:
-    """Everything one run worked out, held as data.
-
-    `_present` can therefore say what happened *after* `main` knows what
-    became of the files, without `run` ever touching one. Contract 6 is
-    unchanged and slightly sharper for it: `_decide` decides, `main` acts,
-    `_present` says what happened — and no longer renders anything at all.
-    """
+    """Everything one run worked out, held as data for `main` and `_present`."""
 
     renderer: Renderer
     as_json: bool
@@ -137,107 +127,193 @@ class _Decision:
     notices: tuple[tuple[str, TranscriptError], ...] = ()
 
 
-def run(argv: Sequence[str] | None = None) -> CliResult:
-    """Decide the whole run and report it, writing nothing.
+@dataclass(frozen=True)
+class _Outcome:
+    """What became of one source. Exactly one field besides `source` is set."""
 
-    What `main` does additionally is write the files and report *afterwards*,
-    so a failed write cannot sit beside a document already claiming success.
-    """
+    source: str
+    document: _Document | None = None
+    listing: str | None = None
+    failure: TranscriptError | None = None
+    notice: TranscriptError | None = None
+
+
+#: Told the position, the total and the source, before each source is worked on.
+_Announce = Callable[[int, int, str], None]
+
+
+def run(argv: Sequence[str] | None = None) -> CliResult:
+    """Decide the whole run and report it, writing nothing."""
     return _present(_decide(argv))
 
 
 def _decide(argv: Sequence[str] | None) -> _Decision:
+    """Work out the whole run without touching anything."""
     args = _parse(argv)
-    fetcher = TranscriptFetcher(
-        cache=NullCache() if args.no_cache else Cache(args.cache)
-    )
     renderer = get_renderer(args.format, **_options(args))
+    planner = _Planner(args.out, renderer.extension, args.force)
+    tally = _Tally()
+    for outcome in _outcomes(args, renderer):
+        tally.add(outcome, planner.plan(outcome.document))
+    return tally.decision(renderer, args.json)
 
-    listings: list[str] = []
-    documents: list[_Document] = []
-    failures: list[tuple[str, TranscriptError]] = []
-    notices: list[tuple[str, TranscriptError]] = []
+
+def _outcomes(
+    args: argparse.Namespace,
+    renderer: Renderer,
+    announce: _Announce | None = None,
+) -> Iterator[_Outcome]:
+    """Every source's outcome, one at a time, so `main` can act on each at once."""
+    fetcher = TranscriptFetcher(cache=_cache(args))
 
     try:
         glossary = _glossary(args)
     except TranscriptError as error:
-        # Not charged to a source. A glossary that cannot be read is wrong for
-        # the whole run, and reporting it once per lecture would suggest the
-        # lectures had something to do with it. Returned as a decision rather
-        # than a rendered result so that under `--json` it lands inside the
-        # envelope, where a failure belongs, instead of as prose on stderr.
-        return _Decision(renderer=renderer, as_json=args.json, failures=(("", error),))
+        # Wrong for the whole run, so reported once and not charged to a source.
+        yield _Outcome("", failure=error)
+        return
 
-    # Playlists become their videos before the loop, so an expanded lecture
-    # is isolated exactly like one typed by hand — a failed expansion costs
-    # the playlist as typed and nothing else, and a failed video costs that
-    # video. A stale expansion is reported the same way a stale manifest is.
+    # Playlists and folders become their items first, so each item is isolated
+    # exactly like a source typed by hand.
     sources: list[str] = []
     for source in args.sources:
         try:
             expansion = fetcher.expand(source)
         except TranscriptError as error:
-            failures.append((source, error))
+            yield _Outcome(source, failure=error)
             continue
         except Exception as error:
-            failures.append((source, _wrap(source, error)))
+            yield _Outcome(source, failure=_wrap(source, error))
             continue
         if expansion.stale_reason is not None:
-            notices.append((source, expansion.stale_reason))
+            yield _Outcome(source, notice=expansion.stale_reason)
         sources.extend(expansion.sources)
 
-    for source in sources:
+    paced = False
+    for position, source in enumerate(sources, start=1):
+        if announce is not None:
+            announce(position, len(sources), source)
         try:
-            # Taken a step at a time rather than through
-            # `TranscriptFetcher.fetch`, which is exactly this and returns only
-            # the lecture. The manifest is needed here because a run served from
-            # cache after the transport failed produces output indistinguishable
-            # from a run that reached YouTube, and the reader has to be told
-            # which one they got.
+            if _is_remote(fetcher, source):
+                # Between remote sources, never before the first.
+                if paced and args.delay:
+                    _pause(args.delay)
+                paced = True
+            # Step by step rather than `TranscriptFetcher.fetch`, because the
+            # manifest says whether this run was served from cache.
             manifest = fetcher.list(source)
             if manifest.stale_reason is not None:
-                notices.append((source, manifest.stale_reason))
+                yield _Outcome(source, notice=manifest.stale_reason)
 
             if args.list:
-                listings.append(_describe(manifest))
+                yield _Outcome(source, listing=_describe(manifest))
             else:
                 lecture = manifest.find(args.languages, _tiers(args)).fetch(
                     glossary=glossary
                 )
-                # Rendered here, inside the try, on purpose: this loop is the
-                # last place that knows which source the lecture came from, so
-                # a renderer that raises costs this lecture and is reported
-                # against its source — instead of escaping `run` later and
-                # losing the whole batch.
-                documents.append(_Document(lecture, renderer.render(lecture)))
+                # Rendered here, so a renderer that raises costs this source.
+                yield _Outcome(
+                    source, document=_Document(lecture, renderer.render(lecture))
+                )
         except TranscriptError as error:
-            failures.append((source, error))
+            yield _Outcome(source, failure=error)
         except Exception as error:
-            # Anything unclassified still costs one lecture, not the batch.
-            failures.append((source, _wrap(source, error)))
+            # Anything unclassified still costs one source, not the batch.
+            yield _Outcome(source, failure=_wrap(source, error))
 
-    return _Decision(
-        renderer=renderer,
-        as_json=args.json,
-        listings=tuple(listings),
-        documents=tuple(documents),
-        files=_plan(args.out, renderer, documents, args.force),
-        failures=tuple(failures),
-        notices=tuple(notices),
-    )
+
+class _Planner:
+    """Names `--out` files one at a time, so no two in a run collide."""
+
+    def __init__(self, out: str | None, extension: str, overwrite: bool) -> None:
+        self._directory = Path(out) if out is not None else None
+        self._extension = extension
+        self._overwrite = overwrite
+        self._taken: set[str] = set()
+
+    def plan(self, document: _Document | None) -> OutputFile | None:
+        """The file this document goes to, or None when nothing is filed."""
+        if self._directory is None or document is None:
+            return None
+        meta = document.lecture.meta
+        name = filename_for(meta.title, meta.source_id, self._extension, self._taken)
+        self._taken.add(name.rsplit(".", 1)[0].casefold())
+        return OutputFile(
+            self._directory / name,
+            document.text,
+            self._overwrite,
+            source_id=meta.source_id if meta.url else None,
+        )
+
+
+class _Tally:
+    """Collects outcomes into a `_Decision`."""
+
+    def __init__(self) -> None:
+        self.listings: list[str] = []
+        self.documents: list[_Document] = []
+        self.files: list[OutputFile] = []
+        self.failures: list[tuple[str, TranscriptError]] = []
+        self.notices: list[tuple[str, TranscriptError]] = []
+
+    def add(self, outcome: _Outcome, output: OutputFile | None = None) -> None:
+        """Record one outcome, and the file planned for it if there is one.
+
+        A filed document is kept only as its file: its text is on its way to
+        disk, and a long playlist should not hold every lecture in memory.
+        """
+        if outcome.failure is not None:
+            self.failures.append((outcome.source, outcome.failure))
+        elif outcome.notice is not None:
+            self.notices.append((outcome.source, outcome.notice))
+        elif outcome.listing is not None:
+            self.listings.append(outcome.listing)
+        elif output is not None:
+            self.files.append(output)
+        else:
+            assert outcome.document is not None  # one field is always set
+            self.documents.append(outcome.document)
+
+    def decision(self, renderer: Renderer, as_json: bool) -> _Decision:
+        return _Decision(
+            renderer=renderer,
+            as_json=as_json,
+            listings=tuple(self.listings),
+            documents=tuple(self.documents),
+            files=tuple(self.files),
+            failures=tuple(self.failures),
+            notices=tuple(self.notices),
+        )
+
+
+def _cache(args: argparse.Namespace) -> Cache:
+    """The cache this run reads and writes, as the flags ask."""
+    if args.no_cache:
+        return NullCache()
+    if args.refresh:
+        return RefreshCache(args.cache)
+    return Cache(args.cache)
+
+
+def _is_remote(fetcher: TranscriptFetcher, source: str) -> bool:
+    """Whether fetching `source` reaches the network, and so should be paced."""
+    try:
+        return fetcher.provider_for(source).remote
+    except UnknownProvider:
+        # `list` reports it, once, like every other per-source failure.
+        return False
 
 
 def _present(
     decision: _Decision,
     problems: Sequence[tuple[str, TranscriptError]] = (),
-    unchanged: frozenset[str] = frozenset(),
+    states: Mapping[str, str] | None = None,
 ) -> CliResult:
     """Turn a decision, plus what became of its files, into what to say.
 
-    The *planned* files decide the mode — a `--out` run reports filenames
-    rather than documents — while the *written* ones decide the content, so a
-    run whose every write failed says nothing on stdout rather than falling
-    through and printing the documents it was asked to file away.
+    Planned files decide the mode (a `--out` run reports filenames); written
+    files decide the content, so a run whose writes all failed prints nothing.
+    `states` maps a path to what its write did, when that was not ``wrote``.
     """
     refused = {source for source, _ in problems}
     written = tuple(f for f in decision.files if str(f.path) not in refused)
@@ -246,9 +322,7 @@ def _present(
     code = _exit_code(produced, trouble)
 
     if decision.as_json:
-        # One self-contained document, so failures belong in it rather than on
-        # a second stream something would have to correlate. A write that
-        # failed is a failure like any other and belongs inside it too.
+        # One self-contained document, write failures included.
         return CliResult(
             text=_envelope(decision, written, trouble),
             exit_code=code,
@@ -256,7 +330,7 @@ def _present(
         )
 
     return CliResult(
-        text=_stdout(decision, written, unchanged),
+        text=_stdout(decision, written, states or {}),
         exit_code=code,
         files=decision.files,
         report=_report(trouble, decision.notices),
@@ -264,12 +338,7 @@ def _present(
 
 
 def _glossary(args: argparse.Namespace) -> Glossary | None:
-    """The caller's spellings, from `--glossary` and `--corrections`.
-
-    Both are read once for the run rather than per source, because they say
-    what words mean and that does not change between two lectures fetched in
-    the same command.
-    """
+    """The caller's spellings, from `--glossary` and `--corrections`, read once."""
     parts = []
     if args.glossary is not None:
         path = Path(args.glossary)
@@ -281,20 +350,13 @@ def _glossary(args: argparse.Namespace) -> Glossary | None:
         return None
     merged = parts[0]
     for part in parts[1:]:
-        # Later files win: `--corrections` is this run's specific findings and
-        # should beat a standing list written for every lecture.
+        # Later wins: this run's corrections beat the standing glossary.
         merged = part.merged_with(merged)
     return merged
 
 
 def _read_reference(path: Path) -> str:
-    """A caller-supplied text file, or a failure that names the file.
-
-    `read_capped` is written for caption payloads, which arrive from a
-    provider that has already established the file exists. These arrive from
-    the command line, where the likeliest thing wrong with one is that it is
-    not there.
-    """
+    """A caller-supplied text file, or a failure that names the file."""
     try:
         return read_capped(path, MAX_GLOSSARY_BYTES)
     except OSError as error:
@@ -327,62 +389,27 @@ def _corrections_file(path: Path) -> Glossary:
 
 
 def _options(args: argparse.Namespace) -> dict[str, object]:
-    """Renderer options taken from the command line, omitted when not given.
-
-    Omitted rather than passed as None, so a renderer keeps its own default
-    instead of having to know that None means "use the default".
-    """
+    """Renderer options from the command line, omitted when not given."""
     return {} if args.budget is None else {"budget": args.budget}
-
-
-def _plan(
-    out: str | None,
-    renderer: Renderer,
-    documents: Sequence[_Document],
-    overwrite: bool,
-) -> tuple[OutputFile, ...]:
-    """Work out what `--out` would write, without writing any of it."""
-    if out is None:
-        return ()
-
-    directory = Path(out)
-    planned: list[OutputFile] = []
-    taken: set[str] = set()
-
-    for document in documents:
-        meta = document.lecture.meta
-        name = filename_for(meta.title, meta.source_id, renderer.extension, taken)
-        taken.add(name.rsplit(".", 1)[0].casefold())
-        planned.append(OutputFile(directory / name, document.text, overwrite))
-
-    return tuple(planned)
 
 
 def _stdout(
     decision: _Decision,
     written: Sequence[OutputFile],
-    unchanged: frozenset[str],
+    states: Mapping[str, str],
 ) -> str:
     if decision.listings:
         return "\n\n\n".join(decision.listings)
     if decision.files:
-        # "unchanged" rather than "wrote" where the file already said exactly
-        # this: claiming to have written it would be a small lie, and the
-        # distinction is the whole reason a repeat run needs no --force.
         return "\n".join(
-            f"{'unchanged' if str(output.path) in unchanged else 'wrote'} {output.path}"
-            for output in written
+            f"{states.get(str(output.path), WROTE)} {output.path}" for output in written
         )
-    # The renderer's own separator, because a blank line between JSONL
-    # documents is not JSONL. The texts were rendered one lecture at a time in
-    # `_decide`, so a renderer crash cost one lecture — this join is the
-    # `render_many` contract, and a test pins the two equal.
+    # The renderer's own separator: a blank line between JSONL documents is
+    # not JSONL.
     return decision.renderer.separator.join(d.text for d in decision.documents)
 
 
-#: How many languages a listing names before summarising the rest. A lecture
-#: with auto-translations offers well over a hundred, and printing them all
-#: buries the handful anyone wanted.
+#: Languages a listing names before summarising the rest.
 MAX_LISTED_LANGUAGES = 20
 
 
@@ -418,13 +445,10 @@ def _report(
     failures: Sequence[tuple[str, TranscriptError]],
     notices: Sequence[tuple[str, TranscriptError]],
 ) -> str:
-    """Everything for stderr: what failed, and what only appeared to work.
+    """Everything for stderr: what failed, and what was served from cache.
 
-    A notice is not a failure — the document on stdout is real and complete —
-    so it must not reach the exit code or turn a successful run into a partial
-    one. It does belong on stderr, because a lecture served from cache after
-    the transport broke reads exactly like one fetched a moment ago, and the
-    difference is something the reader has to act on.
+    A notice does not affect the exit code — the document is real — but the
+    reader needs to know the transport is broken.
     """
     parts = []
     if notices:
@@ -447,23 +471,9 @@ def _envelope(
 ) -> str:
     """The machine-readable form: one JSON object covering the whole run.
 
-    With ``--out`` the documents are on disk, so `results` is empty and
-    `files` says where they went. Repeating the text here would double the
-    output of exactly the runs that asked not to be printed.
-
-    `files` lists what is actually on disk, never what was merely planned. It
-    used to list the plan, so a run that failed every write reported the paths
-    of files that do not exist, alongside ``"ok": true`` and an empty `errors`
-    — while the real failure went to stderr as prose, outside the one document
-    this mode promises to be.
-
-    A write failure is keyed by its path rather than by the source that
-    produced it: the path is what a caller can act on, the filename already
-    carries the title and id, and `code` says which kind of failure it was.
-
-    `warnings` is a separate key from `errors` and does not clear `ok`: those
-    runs produced everything they were asked for. An agent that treated a
-    stale-cache notice as a failure would retry a lecture it already has.
+    With ``--out``, `results` is empty and `files` lists what is actually on
+    disk. A write failure is keyed by its path. `warnings` (stale-cache
+    notices) do not clear `ok`, so an agent will not retry what it already has.
     """
     payload = {
         "ok": not trouble,
@@ -489,14 +499,8 @@ def _exit_code(produced: Sequence[object], failures: Sequence[object]) -> int:
 
 
 def _wrap(source: str, error: Exception) -> TranscriptError:
-    """The last resort: an exception nothing in the taxonomy recognised.
-
-    Redacted on the way through, because this is the one path whose contents
-    nobody has looked at. A classified failure has been through
-    `sources.youtube._classify`, which knows it may be holding a signed URL;
-    an unclassified one is by definition a message from somewhere unexamined,
-    and it lands on stderr and in the `--json` envelope verbatim.
-    """
+    """The last resort for an exception nothing recognised — redacted, because
+    nobody has examined what it might carry."""
     detail = redact(f"{type(error).__name__}: {error}")
     return AcquisitionFailed(source=redact(source), detail=detail)
 
@@ -505,7 +509,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="youtube-transcript-notes",
         description=(
-            "Turn lecture videos into readable, citable study material. "
+            "Turn captioned videos into readable, citable notes. "
             "Accepts YouTube URLs, video IDs and playlist URLs, and paths to "
             "caption files."
         ),
@@ -536,8 +540,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--format",
         default="markdown",
-        # Generated from the registry, so a new renderer is usable the moment
-        # it is registered.
+        # From the registry, so a new renderer is usable once registered.
         choices=sorted(renderers.keys()),
         help="Output format. Defaults to markdown.",
     )
@@ -569,27 +572,38 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         default=None,
         metavar="DIR",
         help=(
-            "Write one file per lecture into DIR instead of printing the "
-            "documents. Each is named from the lecture title and carries the "
+            "Write one file per video into DIR instead of printing the "
+            "documents. Each is named from the video title and id, with the "
             "format's own extension. The directory is created if needed. A "
-            "file already at that name is left alone unless --force."
+            "note this tool wrote for the same video is updated; anything "
+            "else at that name is left alone unless --force."
         ),
     )
     parser.add_argument(
         "--force",
         action="store_true",
         help=(
-            "Replace files that are already there. Without it a lecture whose "
-            "file exists is refused by name and nothing is overwritten — "
-            "this tool keeps no record of which files are its own, so it cannot "
-            "tell last week's note from one you wrote yourself. A file that "
-            "already holds exactly this lecture is left as it is either way."
+            "Replace any file that is already there. Without it, a note this "
+            "tool wrote for the same YouTube video is updated and an identical "
+            "file is left alone, but anything else at that name — a note you "
+            "wrote, another video's — is refused and nothing is overwritten."
         ),
     )
     parser.add_argument(
         "--list",
         action="store_true",
         help="Show what transcripts exist without downloading any of them.",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=DEFAULT_DELAY,
+        metavar="SECONDS",
+        help=(
+            "Pause between YouTube videos in one run, so a playlist does not "
+            f"trip YouTube's bot check. Defaults to {DEFAULT_DELAY:g}; 0 turns "
+            "it off. Local files are never delayed."
+        ),
     )
     parser.add_argument(
         "--json",
@@ -611,6 +625,14 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         "--no-cache",
         action="store_true",
         help="Fetch everything fresh and store nothing.",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help=(
+            "Ignore cached captions and refetch them, storing the fresh copies. "
+            "For captions corrected upstream since they were cached."
+        ),
     )
     parser.add_argument(
         "--glossary",
@@ -636,13 +658,16 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     if args.out is not None and args.list:
-        parser.error("--out writes lectures; --list only reports what exists")
+        parser.error("--out writes notes; --list only reports what exists")
     if args.force and args.out is None:
         parser.error("--force applies to --out, which is what writes files")
+    if args.delay < 0:
+        parser.error("--delay cannot be negative")
+    if args.refresh and args.no_cache:
+        parser.error("--refresh stores what it fetches; --no-cache stores nothing")
     if args.budget is not None and not renderers.get(args.format).takes_budget:
-        # Caught here rather than at construction: a `TypeError` from the
-        # renderer would be swallowed by the batch loop and reported as a
-        # failed lecture, which is not what went wrong.
+        # Here, not at construction, where a `TypeError` would be misreported
+        # as a failed lecture.
         parser.error(f"--budget applies only to --format {_budgeted_formats()}")
     return args
 
@@ -655,47 +680,81 @@ def _budgeted_formats() -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point. The only place in the package that touches the world.
+    """Entry point, and the only place in the package that touches the world.
 
-    Three steps, in the order contract 6 names them: `_decide` works out the
-    whole run without writing anything, `_write_all` writes, and `_present`
-    turns the run *including what became of the files* into stdout, stderr and
-    an exit code.
-
-    Presenting last is the point. When it came first, a write that failed
-    arrived as loose prose beside a document already saying ``wrote …`` — and
-    under `--json`, beside one saying ``"ok": true`` and listing a file that is
-    not there. A file that cannot be written is reported and costs that one
-    lecture, on the same reasoning as a lecture that cannot be fetched.
+    Each file is written as soon as its source is done, so an interrupted
+    playlist keeps everything it finished. The report comes after every write,
+    so it never claims a file that failed.
     """
     _speak_utf8()
-    decision = _decide(argv)
-    problems, unchanged = _write_all(decision.files)
-    result = _present(decision, problems, unchanged)
+    args = _parse(argv)
+    renderer = get_renderer(args.format, **_options(args))
+    planner = _Planner(args.out, renderer.extension, args.force)
+    tally = _Tally()
+    problems: list[tuple[str, TranscriptError]] = []
+    states: dict[str, str] = {}
+    interrupted = False
+
+    try:
+        for outcome in _outcomes(args, renderer, announce=_announcer(args)):
+            output = planner.plan(outcome.document)
+            if output is not None:
+                problem, state = _write_one(output)
+                if problem is not None:
+                    problems.append((str(output.path), problem))
+                else:
+                    states[str(output.path)] = state
+                # On disk now; keep where it went, not the whole text.
+                output = replace(output, text="")
+            tally.add(outcome, output)
+    except KeyboardInterrupt:
+        interrupted = True
+
+    decision = tally.decision(renderer, args.json)
+    result = _present(decision, problems, states)
 
     if result.report:
         print(result.report, file=sys.stderr)
     if result.text:
         print(result.text)
+    if interrupted:
+        print(_INTERRUPTED, file=sys.stderr)
+        return EXIT_INTERRUPTED
     return result.exit_code
 
 
+#: Exit code after Ctrl-C, by shell convention (128 + SIGINT).
+EXIT_INTERRUPTED = 130
+
+_INTERRUPTED = (
+    "Interrupted. Every file reported above is complete. Run the same command "
+    "again to finish: fetched captions are cached, and finished notes come "
+    "back unchanged."
+)
+
+
+def _announcer(args: argparse.Namespace) -> _Announce | None:
+    """Progress on stderr, one line as each source starts.
+
+    Silent for a single source, where the result follows at once, and under
+    `--json`, which promises one document and nothing else.
+    """
+    if args.json:
+        return None
+
+    def announce(position: int, total: int, source: str) -> None:
+        if total > 1:
+            print(f"[{position}/{total}] {source}", file=sys.stderr, flush=True)
+
+    return announce
+
+
 def _speak_utf8() -> None:
-    """Make stdout and stderr carry any transcript, not just a lucky one.
+    """Make stdout and stderr carry any transcript.
 
-    Windows gives a redirected stream the system code page, so a
-    `youtube-transcript-notes url > notes.md` redirect wrote cp1252 and
-    *crashed* on any lecture containing a character outside it — a Greek letter
-    in a maths lecture, a name with the wrong accent, the marks this tool now
-    writes for an unheard word. `--out` was always safe, because `atomic_write`
-    names its encoding; stdout was safe only by accident, and the accident held
-    until a transcript needed a character.
-
-    Reconfiguring rather than wrapping, so anything that already captured
-    these streams — a test harness, a caller embedding the CLI — keeps the
-    object it is holding. Streams that cannot be reconfigured are left alone:
-    a caller who replaced stdout with something of their own has said what
-    they want, and this is a default, not a policy.
+    Windows gives a redirected stream the system code page, which crashes on
+    the first character outside it. Reconfigured in place, so anything already
+    holding these streams keeps the same object.
     """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -703,90 +762,71 @@ def _speak_utf8() -> None:
             reconfigure(encoding="utf-8")
 
 
-def _write_all(
-    files: Sequence[OutputFile],
-) -> tuple[tuple[tuple[str, TranscriptError], ...], frozenset[str]]:
-    """Write every planned file. Report what was refused, and what was already so.
+def _write_one(output: OutputFile) -> tuple[TranscriptError | None, str]:
+    """Write one planned file: the problem if it was refused, else what it did.
 
-    Problems come back in the shape a failed *fetch* takes, so a write problem
-    reaches stderr, the `--json` envelope and the exit code through exactly the
-    machinery a fetch problem does — carrying a code something downstream can
-    branch on rather than a sentence it would have to read.
+    A problem takes the shape of a failed fetch, so it reaches stderr, the JSON
+    envelope and the exit code through the same machinery.
     """
-    problems: list[tuple[str, TranscriptError]] = []
-    unchanged: set[str] = set()
-
-    for output in files:
-        where = str(output.path)
-        try:
-            if not _write(output):
-                unchanged.add(where)
-        except FileExistsError:
-            problems.append((where, OutputExists(path=where)))
-        except OSError as error:
-            problems.append(
-                (
-                    where,
-                    OutputUnwritable(path=where, detail=error.strerror or str(error)),
-                )
-            )
-        except Exception as error:
-            # The same last resort `_decide` keeps for a fetch. A batch that
-            # survives its own failures has to survive them on this side too:
-            # without this, one unexpected exception escaped `main` as a
-            # traceback and lost every note already written.
-            problems.append(
-                (
-                    where,
-                    OutputUnwritable(
-                        path=where, detail=redact(f"{type(error).__name__}: {error}")
-                    ),
-                )
-            )
-
-    return tuple(problems), frozenset(unchanged)
+    where = str(output.path)
+    try:
+        return None, _write(output)
+    except FileExistsError:
+        return OutputExists(path=where), ""
+    except OSError as error:
+        return OutputUnwritable(path=where, detail=error.strerror or str(error)), ""
+    except Exception as error:
+        # The last resort, as in `_outcomes`: one bad write costs one file.
+        detail = redact(f"{type(error).__name__}: {error}")
+        return OutputUnwritable(path=where, detail=detail), ""
 
 
-def _write(output: OutputFile) -> bool:
-    """Write one document. False if the file already said exactly this.
-
-    The same write-beside-then-rename the cache uses, and literally the same
-    function: an interrupted run leaves either the previous notes or the new
-    ones, never half of either. See `atomic`.
-    """
+def _write(output: OutputFile) -> str:
+    """Write one document atomically, and say whether it was written, left
+    unchanged, or updated in place of this tool's own earlier note."""
     try:
         atomic_write(output.path, output.text, overwrite=output.overwrite)
-        return True
+        return WROTE
     except FileExistsError:
-        # Only reachable with `overwrite=False`. A file identical to what would
-        # have been written is not something anyone needs protecting from —
-        # writing it changes nothing — so re-running a lecture into the folder
-        # it already lives in stays as quiet as it always was, and `--force`
-        # stays reserved for a note whose contents would actually change.
+        # Identical content needs no `--force`: writing it changes nothing.
         if _already_says(output):
-            return False
+            return UNCHANGED
+        # Nor does this tool's own note for the same video: re-rendering it —
+        # with corrections, or after an upgrade — is the normal case.
+        if _is_own_note(output):
+            atomic_write(output.path, output.text, overwrite=True)
+            return UPDATED
         raise
 
 
+def _is_own_note(output: OutputFile) -> bool:
+    """Whether the file in the way is this tool's note for the same video.
+
+    Read from its frontmatter, which names the generator and the source id.
+    Check-then-replace, like `_already_says`: a file swapped in between is a
+    narrow race, and the worst case replaces a note claiming to be this one.
+    """
+    if output.source_id is None:
+        return False
+    try:
+        with output.path.open(encoding="utf-8") as handle:
+            head = handle.read(_FRONTMATTER_PROBE)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    fields = read_frontmatter(head)
+    return (
+        fields.get("generator", "").startswith(f"{GENERATOR} ")
+        and fields.get("source_id") == output.source_id
+    )
+
+
 def _already_says(output: OutputFile) -> bool:
-    """Whether the file in the way is byte-for-byte what we would have put there.
+    """Whether the file in the way is exactly what we would have put there.
 
-    Read rather than claimed, which is a check-then-act — deliberately, and
-    safe in the only direction that matters: if the file changes in between,
-    the outcome is that the tool declines to overwrite something it has not
-    looked at, which is what it was going to do anyway.
-
-    Anything unreadable is *not* this lecture, which is the answer that refuses.
-    `UnicodeDecodeError` is named alongside `OSError` because it is a
-    `ValueError` and would otherwise escape: a binary file sitting at the
-    destination would be reported as an unwritable directory rather than as
-    what it is, something already there under that name.
-
-    Sized before it is read. The comparison can only answer True for a file
-    the same length as this document, so anything larger — a video parked at
-    the note's name, say — is False without pulling it into memory. The bound
-    allows one extra byte per newline, because `atomic` writes in text mode
-    and Windows stores each ``\\n`` as two bytes.
+    Anything unreadable is *not* this document, which is the answer that
+    refuses. Sized first, so a large file is never read; the bound allows a
+    byte per newline for Windows line endings.
     """
     try:
         limit = len(output.text.encode("utf-8")) + output.text.count("\n")

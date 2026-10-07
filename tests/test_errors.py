@@ -71,6 +71,14 @@ class TestRemedy:
         error.remedy["context"]["source"] = "tampered"
         assert error.remedy["context"]["source"] == "abc"
 
+    def test_situational_advice_follows_the_standing_advice(self) -> None:
+        error = AgeRestricted(source="abc", also_try=("Install a thing.",))
+
+        assert error.remedy["try"] == [*AgeRestricted.TRY, "Install a thing."]
+        assert str(error).endswith("  - Install a thing.")
+        # Advice, not context: it must not leak into the substitution fields.
+        assert "also_try" not in error.remedy["context"]
+
 
 class TestTrackNotFound:
     """Refusing to say what *was* available is the unhelpful version of this."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import CAPTIONS
+from conftest import CAPTIONS, without_frontmatter
 from youtube_transcript_notes import TranscriptFetcher
 from youtube_transcript_notes.models import Lecture
 from youtube_transcript_notes.render import get_renderer
@@ -163,7 +163,7 @@ class TestExcerpts:
     def test_an_excerpt_renders_like_any_other_lecture(self, lecture: Lecture) -> None:
         notes = get_renderer("markdown").render(lecture.between(600.0, 900.0))
 
-        assert notes.startswith("# mit6006-lec1")
+        assert without_frontmatter(notes).startswith("# mit6006-lec1")
 
 
 class TestQuotedTranscript:

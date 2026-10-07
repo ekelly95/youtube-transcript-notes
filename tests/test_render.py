@@ -13,9 +13,12 @@ from dataclasses import replace
 
 import pytest
 
+from conftest import HOSTILE_CHANNEL, HOSTILE_TITLE, without_frontmatter
+from youtube_transcript_notes import __version__
 from youtube_transcript_notes.errors import UnknownRenderer
 from youtube_transcript_notes.models import Correction, Lecture, Passage, Section
 from youtube_transcript_notes.render import get_renderer, renderers
+from youtube_transcript_notes.render.markdown import read_frontmatter
 
 FULL_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -62,6 +65,17 @@ class TestPlain:
 class TestMarkdown:
     def test_full_lecture_golden(self, full_lecture: Lecture) -> None:
         expected = (
+            "---\n"
+            'title: "Lecture 4: Dynamic Programming"\n'
+            'source_id: "dQw4w9WgXcQ"\n'
+            f'url: "{FULL_URL}"\n'
+            'channel: "MIT OpenCourseWare"\n'
+            "published: 2011-09-12\n"
+            'tier: "manual"\n'
+            'language: "en"\n'
+            f'generator: "youtube-transcript-notes {__version__}"\n'
+            "---\n"
+            "\n"
             "# Lecture 4: Dynamic Programming\n"
             "\n"
             f"*MIT OpenCourseWare · 12 September 2011 · [watch]({FULL_URL}) · "
@@ -89,6 +103,14 @@ class TestMarkdown:
         # scaffolding — but the byline never collapses entirely: what the
         # text is made of is the one fact a local file still has.
         expected = (
+            "---\n"
+            'title: "week-03-lecture"\n'
+            'source_id: "week-03-lecture"\n'
+            'tier: "asr_platform"\n'
+            'language: "en"\n'
+            f'generator: "youtube-transcript-notes {__version__}"\n'
+            "---\n"
+            "\n"
             "# week-03-lecture\n"
             "\n"
             "*platform auto-generated captions (en)*\n"
@@ -111,6 +133,125 @@ class TestMarkdown:
         assert "*12 September 2011 · human-written captions (en)*" in get_renderer(
             "markdown"
         ).render(lecture)
+
+
+def _chapterless(base: Lecture, minutes: int, every: int = 60, url: str | None = None):
+    """A lecture with no chapters: one untitled section, a passage per `every` s."""
+    passages = tuple(
+        Passage(text=f"Passage at {start}.", start=float(start), end=start + 30.0)
+        for start in range(0, minutes * 60, every)
+    )
+    return replace(
+        base,
+        meta=replace(base.meta, url=url, chapters=()),
+        sections=(Section(title=None, start=0.0, passages=passages),),
+    )
+
+
+class TestTimeHeadings:
+    """A long transcript with no chapters gets a heading every ten minutes —
+    timestamps only, never an invented topic."""
+
+    @staticmethod
+    def _headings(output: str) -> list[str]:
+        return [line for line in output.splitlines() if line.startswith("## ")]
+
+    def test_a_long_chapterless_transcript_gets_one_every_ten_minutes(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        output = get_renderer("markdown").render(_chapterless(minimal_lecture, 45))
+
+        assert self._headings(output) == [
+            "## 0:00",
+            "## 10:00",
+            "## 20:00",
+            "## 30:00",
+            "## 40:00",
+        ]
+        # Each heading sits directly above the passage it names.
+        assert "## 10:00\n\n**[10:00]** Passage at 600." in output
+
+    def test_headings_link_when_the_source_does(self, minimal_lecture: Lecture) -> None:
+        lecture = _chapterless(minimal_lecture, 25, url=FULL_URL)
+        headings = self._headings(get_renderer("markdown").render(lecture))
+
+        assert headings[1] == f"## [10:00]({FULL_URL}&t=600)"
+
+    def test_a_gap_moves_the_heading_to_the_next_passage_without_repeats(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        """Passages every seven minutes: boundaries fall between them."""
+        lecture = _chapterless(minimal_lecture, 40, every=420)
+        headings = self._headings(get_renderer("markdown").render(lecture))
+
+        assert headings == ["## 0:00", "## 14:00", "## 21:00", "## 35:00"]
+
+    def test_a_short_transcript_reads_whole(self, minimal_lecture: Lecture) -> None:
+        output = get_renderer("markdown").render(_chapterless(minimal_lecture, 19))
+
+        assert self._headings(output) == []
+
+    def test_published_chapters_are_never_mixed_with_time_headings(
+        self, full_lecture: Lecture
+    ) -> None:
+        headings = self._headings(get_renderer("markdown").render(full_lecture))
+
+        assert headings == ["## Memoisation", "## Bottom-up tables"]
+
+
+class TestFrontmatter:
+    """Citation fields for notes apps, and the CLI's proof of authorship."""
+
+    def test_it_reads_back_what_it_wrote(self, full_lecture: Lecture) -> None:
+        fields = read_frontmatter(get_renderer("markdown").render(full_lecture))
+
+        assert fields["title"] == "Lecture 4: Dynamic Programming"
+        assert fields["source_id"] == "dQw4w9WgXcQ"
+        assert fields["generator"] == f"youtube-transcript-notes {__version__}"
+
+    def test_a_hostile_title_round_trips_inside_its_quotes(
+        self, hostile_lecture: Lecture
+    ) -> None:
+        output = get_renderer("markdown").render(hostile_lecture)
+        block = output.split("\n---\n", 1)[0]
+        fields = read_frontmatter(output)
+
+        assert fields["title"] == HOSTILE_TITLE
+        assert fields["channel"] == HOSTILE_CHANNEL
+        # One line per field: the title's newlines are escapes, not breaks.
+        assert all(
+            re.fullmatch(r"[a-z_]+: .*", line) for line in block.splitlines()[1:]
+        )
+        # Inert even where a viewer renders the block as ordinary Markdown.
+        assert not set("<>[]`") & set(block)
+        # `javascript:` is never written down as a link.
+        assert "url" not in fields
+
+    def test_what_yaml_reads_as_a_line_break_is_escaped(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        title = "one" + chr(0x2028) + "two" + chr(0x85) + "three"
+        lecture = replace(
+            minimal_lecture, meta=replace(minimal_lecture.meta, title=title)
+        )
+        block = get_renderer("markdown").render(lecture).split("\n---\n", 1)[0]
+
+        assert chr(0x2028) not in block
+        assert chr(0x85) not in block
+        assert block.splitlines()[1].startswith('title: "one')
+
+    def test_only_a_closed_block_counts(self) -> None:
+        assert read_frontmatter('---\ntitle: "x"\n# never closed\n') == {}
+        assert read_frontmatter("# just a note\n") == {}
+
+    def test_unreadable_values_are_skipped(self) -> None:
+        text = '---\ntitle: "unterminated\nsource_id: "abc"\nnote: plain\n---\n'
+
+        assert read_frontmatter(text) == {"source_id": "abc"}
+
+    @pytest.mark.parametrize("name", ["plain", "citation", "context", "jsonl"])
+    def test_other_formats_carry_none(self, full_lecture: Lecture, name: str) -> None:
+        assert not get_renderer(name).render(full_lecture).startswith("---")
 
 
 class TestMarkdownGivenHostileSource:
@@ -140,7 +281,8 @@ class TestMarkdownGivenHostileSource:
             "!\\[\\](http://evil.test/q.png).\n"
         )
 
-        assert get_renderer("markdown").render(hostile_lecture) == expected
+        rendered = get_renderer("markdown").render(hostile_lecture)
+        assert without_frontmatter(rendered) == expected
 
     def test_no_heading_but_the_one_the_tool_wrote(
         self, hostile_lecture: Lecture
@@ -302,7 +444,8 @@ class TestRenderMany:
     ) -> None:
         output = get_renderer("markdown").render_many([full_lecture, minimal_lecture])
 
-        assert "\n\n\n# week-03-lecture" in output
+        assert "\n\n\n---\n" in output
+        assert output.count("# week-03-lecture") == 1
 
     def test_jsonl_stays_line_oriented(
         self, full_lecture: Lecture, minimal_lecture: Lecture

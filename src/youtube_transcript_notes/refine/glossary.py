@@ -1,54 +1,21 @@
 """Names the recogniser mangled, and the spellings the source already knew.
 
-A lecture arrives carrying part of its own answer key. The title and the
-uploader's chapter headings are typed by a person, so they spell the subject
-correctly, and they name exactly the things a speech recogniser gets wrong:
-products, people, the terms of art the talk is about. In one measured interview
-the heading read `## Claude Cowork` while the transcript underneath it said
-"Claude Colab", and the pipeline held both strings at once and never compared
-them.
+The title and chapter headings are typed by a person, and they name exactly
+what a recogniser gets wrong: people, products, terms of art. This stage
+compares them with the transcript and *proposes* corrections, shown beside the
+original words — never edits, so a repair can always be told from a
+hallucination.
 
-This stage compares them. It proposes; it does not edit. A `Correction` says
-what was found, what it should be, how sure that is and where the right
-spelling came from, and the renderers show the original with the correction
-beside it. Rewriting the transcript in place would be the one change that
-cannot be undone, because the reader would lose the ability to tell a repair
-from a hallucination, and a transcript nobody can check is worth less than a
-wrong one everybody can.
+The automatic half is deliberately narrow. Fuzzy ratios (`difflib`) were
+measured first and proposed 140 corrections on a two-hour interview, about
+eight of them right. Edit distance counts what differs, so it catches
+near-misses within a character or two (`Enthropic`, `Cowerk`) and little else.
+Plurals and possessives of a harvested term are refused, because headings are
+singular and speakers are not.
 
-## Why the matching is as narrow as it is
-
-The obvious design — fuzzy-match every phrase against every known term — was
-built first and measured on a two-hour interview. It proposed 140 corrections,
-of which about eight were right. `difflib`'s ratio is dominated by the shared
-part of a string, so "Claude to" scores 0.80 against "Claude Code" and beats
-the genuine "quad code" at 0.70: the noise outranked the signal, and no
-threshold existed that admitted one without the other.
-
-Edit distance separates them, because it counts what differs instead of
-rewarding what matches. On the same pairs: "Claude core" 1, "Cloud Code" 2,
-"Claude to" 3, "quad code" 4. So the automatic half of this stage catches
-near-misses within a character or two and nothing else, which is a small,
-reliable win — `Enthropic`, `Cherney`, `Mahes`, `Cowerk` — rather than a large
-unreliable one.
-
-Narrow is still not narrow enough on its own, because **a plural is one edit
-away from its own singular**. Headings are written singular and lecturers speak
-in the plural, so the chapter `Simple Algorithm` on MIT 6.006 contributed the
-word "Algorithm" and the note came back reading `algorithms [Algorithm]`
-thirty-six times — every correction that lecture produced, all of them wrong,
-printed in the middle of the sentences the note exists to make readable. A
-proposal that is only an inflection of the word already there is refused; see
-`_merely_inflected`, including why it does not apply to a term somebody wrote
-down on purpose.
-
-The rest is a list, and the list is the point. Speech recognition errors are
-*acoustic*: "Colab" for "Cowork", "quad code" for "Claude Code", "sauna 3.5"
-for "Sonnet 3.5". Nothing measuring spelling will ever reach those. They have
-to be named once, by someone who knows the domain — a reader or a model
-reading with `--corrections` — and after that they are caught for nothing on
-every lecture that follows. A glossary is worth more in its second year than
-its first.
+Acoustic errors ("quad code" for "Claude Code") are out of reach of any
+spelling measure; they are named once in a glossary or `--corrections` file
+and caught on every later run.
 """
 
 from __future__ import annotations
@@ -69,20 +36,16 @@ __all__ = [
     "terms_from",
 ]
 
-#: Shortest single-word term worth watching. Below this, ordinary English sits
-#: one character away from half the vocabulary — "Meta" is one edit from meat,
-#: beta, mega and met — and a short chapter title would annotate the document
-#: into uselessness.
+#: Shortest single-word term worth watching. Shorter words sit one edit from
+#: too much ordinary English ("Meta": meat, beta, mega, met).
 _SHORTEST_TERM = 6
 
 #: Shortest single word taken out of a longer name. Higher than
 #: `_SHORTEST_TERM` because the evidence is weaker — see `_worth_watching`.
 _SHORTEST_INHERITED = 8
 
-#: How many characters may differ before a phrase stops being a misspelling of
-#: a term and starts being a different phrase. Two for something long enough to
-#: absorb it, one otherwise. Measured: this admits "Cloud Code" (2) and refuses
-#: "Claude to" (3).
+#: Terms at least this long tolerate two edits; shorter ones tolerate one.
+#: Admits "Cloud Code" (2) for "Claude Code" and refuses "Claude to" (3).
 _LONG_ENOUGH_FOR_TWO = 10
 
 #: Characters stripped from the edge of a phrase before comparing, so that
@@ -112,11 +75,8 @@ class Glossary(NamedTuple):
 def terms_from(meta: LectureMeta) -> Glossary:
     """Canonical spellings the source supplied, mapped to where they came from.
 
-    Proper-noun phrases only — maximal runs of capitalised words. The subtlety
-    is that a heading capitalises its first word whether or not it is a name,
-    so `## Lessons from Meta` must yield "Meta" and not "Lessons". A run that
-    opens its heading therefore contributes only its multi-word forms, and a
-    lone capitalised word counts only where nothing forced it to be capital.
+    Proper-noun phrases only. A heading capitalises its first word regardless,
+    so `## Lessons from Meta` yields "Meta" and not "Lessons".
     """
     found: dict[str, str] = {}
     sources = [(meta.title, "title"), (meta.channel or "", "channel")]
@@ -131,10 +91,9 @@ def terms_from(meta: LectureMeta) -> Glossary:
 def read_glossary(text: str, source: str = "glossary") -> Glossary:
     """Read a glossary file.
 
-    One term per line. `Anthropic` on its own says to watch for near-misses of
-    it. `Claude Code: quad code, Squad code` also says that those two exact
-    forms are it, which is how the errors no spelling measure can reach get
-    caught. `#` starts a comment.
+    One term per line. `Anthropic` alone watches for near-misses of it;
+    `Claude Code: quad code, Squad code` also names exact wrong forms. `#`
+    starts a comment.
     """
     terms: dict[str, str] = {}
     variants: dict[str, tuple[str, str]] = {}
@@ -157,11 +116,7 @@ def read_glossary(text: str, source: str = "glossary") -> Glossary:
                 # the same way every run rather than by dictionary order.
                 variants.setdefault(folded, (term, "glossary"))
 
-    # Counted after parsing, because parsing a megabyte is milliseconds — the
-    # scan is what the ceiling protects: every term here runs an edit distance
-    # against every word window of every passage, so a list the byte cap
-    # happily admits can cost minutes per lecture. Refused whole, like every
-    # other ceiling in `limits`.
+    # Counted after parsing: the ceiling protects the scan, not the parse.
     entries = len(terms) + len(variants)
     if entries > MAX_GLOSSARY_TERMS:
         raise PayloadTooLarge(
@@ -176,10 +131,8 @@ def read_glossary(text: str, source: str = "glossary") -> Glossary:
 def read_corrections(records: Sequence[object], source: str) -> Glossary:
     """A model's corrections table, as exact forms to watch for.
 
-    Read as a glossary rather than kept as findings, so that a correction found
-    once is applied everywhere the phrase occurs and counted — a model reading
-    a two-hour transcript reports "quad code" once, and the note should mark
-    all twenty-three of them.
+    Read as a glossary, so a correction reported once is marked everywhere the
+    phrase occurs.
     """
     variants: dict[str, tuple[str, str]] = {}
 
@@ -266,9 +219,7 @@ def _matches(
             if found is not None:
                 hits.append((start, length, found))
 
-    # Longest first. "Erik Domane" and "Domane" match the same two words, and
-    # reporting both would count one mistake twice and put two rows in the
-    # appendix where the speaker's name was got wrong once.
+    # Longest first, so "Erik Domane" and "Domane" count as one mistake.
     taken: set[int] = set()
     for start, length, found in sorted(hits, key=lambda hit: (-hit[1], hit[0])):
         window = range(start, start + length)
@@ -303,27 +254,16 @@ def _hit(
     return None
 
 
-#: Plural and possessive endings. A word carrying one of these is the same word,
-#: and every one of them is a single edit — which is inside what `_distance`
-#: allows, so without this check they all read as misspellings.
+#: Plural and possessive endings: one edit each, but the same word.
 _INFLECTIONS = ("s", "es", "'s", "’s")  # noqa: RUF001
 
 
 def _merely_inflected(phrase: str, term: str, origin: str) -> bool:
     """Whether these differ only by a plural or possessive ending.
 
-    A term harvested from the lecture's own headings is usually singular, and
-    the lecturer then says it in the plural all afternoon. On MIT 6.006 the
-    chapter `Simple Algorithm` contributed the word "Algorithm", which is one
-    edit from "algorithms" — so a correct transcript came back annotated
-    `algorithms [Algorithm]` twenty times in one lecture. The proposals were
-    not merely useless: every one is rendered beside the words, so the noise
-    landed in the middle of the sentences the note exists to make readable.
-
-    Only for the automatic half. A term somebody wrote in a glossary file is a
-    decision they made on purpose, and honouring it is what makes the list
-    worth keeping — if they name `Devadas`, "Devada" is still proposed, even
-    though nothing about its shape distinguishes it from a plural.
+    Harvested headings are singular and speakers use plurals: MIT 6.006's
+    chapter `Simple Algorithm` once marked every "algorithms". Terms from a
+    glossary file are exempt — naming `Devadas` still catches "Devada".
     """
     if origin == "glossary":
         return False
@@ -334,12 +274,8 @@ def _merely_inflected(phrase: str, term: str, origin: str) -> bool:
 
 def _distance(phrase: str, term: str) -> int | None:
     """How many edits apart, or None if further than this term tolerates."""
-    # A version is not a spelling. "Sonnet 4.5" is one edit from "Sonnet 3.5",
-    # "GPT-4" one from "GPT-4o", and neither is a misspelling of the other —
-    # they are different things, and proposing the correction would quietly
-    # rewrite which model somebody was talking about. So a term carrying a
-    # digit is matched exactly or not at all: name the wrong forms in the
-    # glossary, where saying so is a decision somebody made on purpose.
+    # A version is not a spelling: "Sonnet 4.5" is one edit from "Sonnet 3.5".
+    # Terms with digits match exactly or not at all.
     if _digits(term) or _digits(phrase):
         return None
 
@@ -354,9 +290,7 @@ def _distance(phrase: str, term: str) -> int | None:
 def _levenshtein(left: str, right: str, ceiling: int) -> int | None:
     """Edit distance, abandoned as soon as it is certainly over `ceiling`.
 
-    Written out rather than pulled in: the pure pipeline has no third-party
-    code, and this is a dozen lines against a dependency that would have to be
-    installed to render a note.
+    Written out to keep the pipeline free of third-party dependencies.
     """
     if len(left) < len(right):
         left, right = right, left
@@ -379,12 +313,9 @@ def _levenshtein(left: str, right: str, ceiling: int) -> int | None:
     return previous[-1] if previous[-1] <= ceiling else None
 
 
-#: What starts a fresh run of title case part way through a title. A word
-#: after one of these is capitalised because of where it sits, exactly as the
-#: first word of the title is, and proves no more than that one does.
-#: `Stanford CS230 | Autumn 2025 | Lecture 8: Agents` offers no evidence that
-#: "Lecture" is a name — and watching it annotates every "lectures" in a
-#: lecture.
+#: Separators that restart title case part way through a title. The word after
+#: one is capitalised by position, so in `CS230 | Lecture 8: Agents` "Lecture"
+#: is not evidence of a name.
 _SEGMENTS = re.compile(r"[|:;.–—]|\s-\s")  # noqa: RUF001
 
 
@@ -406,10 +337,8 @@ def _proper_nouns_in(text: str) -> list[str]:
             continue
         if run:
             opened_the_text = index - len(run) == 0
-            # A run that opened the text opened it capitalised whether or not
-            # it is a name, so its first word proves nothing on its own. The
-            # phrases it contributes all keep at least two words, where the
-            # capitalisation of the second is evidence the first cannot fake.
+            # A run that opened the text was capitalised by position, so it
+            # contributes only forms of two or more words.
             if len(run) > 1 or not opened_the_text:
                 _collect(phrases, " ".join(run))
             if opened_the_text and len(run) > 1:
@@ -430,11 +359,8 @@ def _worth_watching(term: str, inherited: bool = False) -> bool:
         return len(term) >= _SHORTEST_TERM
     if not any(char.isalpha() for char in term):
         return False
-    # A word taken out of a longer name is weaker evidence than one that stood
-    # alone, so it has to be more distinctive to earn the same treatment.
-    # "Joining Anthropic" is worth watching "Anthropic" for; "Claude Cowork"
-    # is not worth watching "Cowork" for, and "Claude Code's" is certainly not
-    # worth watching "Code's" for — one edit from "codes".
+    # A word taken out of a longer name is weaker evidence, so it must be
+    # longer: "Anthropic" from "Joining Anthropic", but not "Code's".
     return len(term) >= (_SHORTEST_INHERITED if inherited else _SHORTEST_TERM)
 
 

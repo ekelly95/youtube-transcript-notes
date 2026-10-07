@@ -9,7 +9,7 @@ without any of them needing to build a `Lecture` by hand.
 from __future__ import annotations
 
 import socket
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -41,6 +41,13 @@ def load_caption(name: str) -> str:
 def load_synthetic(name: str) -> str:
     """Read a hand-built fixture. See tests/fixtures/README.md."""
     return (SYNTHETIC / name).read_text(encoding="utf-8")
+
+
+def without_frontmatter(markdown: str) -> str:
+    """A Markdown note minus its frontmatter block, to assert on the note itself."""
+    if not markdown.startswith("---\n"):
+        return markdown
+    return markdown.split("\n---\n", 1)[1].lstrip("\n")
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +94,19 @@ def isolate_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     `tests/test_cache.py`.
     """
     monkeypatch.setenv("YOUTUBE_TRANSCRIPT_NOTES_CACHE", str(tmp_path / "cache"))
+
+
+@pytest.fixture(autouse=True)
+def no_pacing(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record the CLI's pauses between remote sources instead of sleeping.
+
+    Returned so a test can assert on what the run *would* have waited.
+    """
+    from youtube_transcript_notes import cli
+
+    pauses: list[float] = []
+    monkeypatch.setattr(cli, "_pause", pauses.append)
+    return pauses
 
 
 #: One attack per externally-controlled field, kept together so a renderer
@@ -138,7 +158,7 @@ def hostile_lecture() -> Lecture:
             tier=TrustTier.MANUAL,
             language="en",
             caption_format="json3",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="c" * 64,
         ),
     )
@@ -203,7 +223,7 @@ def full_lecture() -> Lecture:
             tier=TrustTier.MANUAL,
             language="en",
             caption_format="json3",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="a" * 64,
             source_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ),
@@ -227,7 +247,7 @@ def minimal_lecture() -> Lecture:
             tier=TrustTier.ASR_PLATFORM,
             language="en",
             caption_format="vtt",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="b" * 64,
         ),
     )

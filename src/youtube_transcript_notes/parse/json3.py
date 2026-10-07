@@ -1,19 +1,16 @@
 """YouTube's ``json3`` caption format — the preferred source.
 
-Two properties earn it that status. It carries per-word offsets on
-auto-generated tracks, so a timestamp can be accurate to the word rather than
-to a three-second cue. And its rolling-window scrolling is expressed
-structurally, as separate ``aAppend`` events, rather than by repeating the
-previous text the way WebVTT does — so filtering those events yields clean
-cues with no text deduplication needed at all.
+It carries per-word offsets on automatic tracks, and expresses rolling-window
+scrolling as separate ``aAppend`` events rather than repeated text, so
+dropping those events yields clean cues with no deduplication.
 
-Observed shapes, from real MIT OpenCourseWare captions:
+Observed shapes, from MIT OpenCourseWare captions:
 
-* manual — every event is ``{tStartMs, dDurationMs, segs}`` with a single
-  ``segs`` entry whose ``utf8`` holds the whole cue, newlines and all.
-* automatic — one leading window-definition event with no ``segs``, then
-  alternating content events and ``aAppend`` events whose only content is a
-  newline. Content segs carry ``tOffsetMs`` and ``acAsrConf``.
+* manual — each event is ``{tStartMs, dDurationMs, segs}`` with one seg
+  holding the whole cue.
+* automatic — a leading window-definition event with no ``segs``, then
+  content events alternating with newline-only ``aAppend`` events. Content
+  segs carry ``tOffsetMs`` and ``acAsrConf``.
 """
 
 from __future__ import annotations
@@ -50,15 +47,10 @@ def parse_json3(payload: str, source: str = "<unknown>") -> list[Cue]:
             source=source, fmt="json3", detail="no 'events' key at the top level"
         )
 
-    # Typed before it is counted, because `check_count` asks for a length and
-    # `None` and `5` have none — the count check would raise a bare TypeError
-    # for a payload whose real problem is its shape.
     events = require_list(data["events"], "'events'", source, "json3")
 
-    # Counted before anything is built from it. Bytes alone do not bound this:
-    # about forty bytes of JSON buys one event, and one event becomes a dict
-    # costing several times that, so a payload well inside the byte ceiling
-    # can still expand past what the process can hold. See `limits`.
+    # Counted before anything is built: a payload inside the byte ceiling can
+    # still describe far more events than memory allows. See `limits`.
     check_count(events, MAX_EVENTS, source, "json3", "events")
 
     cues = []
@@ -77,17 +69,12 @@ def _cue_from_event(event: Any, source: str) -> Cue | None:
     if not raw_segs:
         return None
 
-    # Typed before it is walked. `segs` reached `seg.get` unchecked, so
-    # `{"segs": [null]}` raised `AttributeError` and `{"segs": 5}` raised
-    # `TypeError` — both true, neither in the taxonomy, and the library caller
-    # got the raw exception while the CLI filed it as an acquisition failure.
     segs = [
         require_object(seg, "seg", source, "json3")
         for seg in require_list(raw_segs, "'segs'", source, "json3")
     ]
 
-    # Scroll padding: the renderer's way of moving the window up a line. Its
-    # only content is a newline, and it duplicates nothing.
+    # Scroll padding: only a newline, duplicating nothing.
     if event.get("aAppend"):
         return None
 
@@ -105,10 +92,7 @@ def _cue_from_event(event: Any, source: str) -> Cue | None:
 
     return Cue(
         text=text,
-        # Clamped, like the negative durations below and for the same reason:
-        # `format_timestamp` renders a negative start as "-1:59:55", and every
-        # consumer downstream would otherwise have to defend against a lecture
-        # that begins before it begins.
+        # Clamped, as negative durations are, so nothing begins before zero.
         start=max(start, 0.0),
         duration=_duration(event, source),
         words=_words(segs, max(start, 0.0), source),
@@ -118,16 +102,8 @@ def _cue_from_event(event: Any, source: str) -> Cue | None:
 def _duration(event: dict[str, Any], source: str) -> float:
     """How long this cue lasts, in seconds.
 
-    Absent is fine and means zero — the field is genuinely optional, and a cue
-    with no duration still has the start that makes it citable. Present but
-    not a number is not fine, and says so rather than raising a bare
-    `TypeError` from arithmetic several frames down.
-
-    Negative durations are clamped rather than rejected, which is what
-    `parse.vtt` and `parse.srt` already do with a cue that ends before it
-    begins. A `Cue` whose `end` precedes its `start` would put a passage's end
-    before its own beginning, and every consumer downstream would have to
-    defend against it.
+    Absent means zero. Negative is clamped, as `parse.vtt` and `parse.srt` do,
+    so a cue never ends before it begins.
     """
     return max(
         require_finite(event.get("dDurationMs", 0), "dDurationMs", source, "json3")
@@ -137,11 +113,9 @@ def _duration(event: dict[str, Any], source: str) -> float:
 
 
 def _words(segs: list[dict[str, Any]], start: float, source: str) -> tuple[Word, ...]:
-    """Per-word timings, but only when the source actually supplied offsets.
+    """Per-word timings, only when the source actually supplied offsets.
 
-    Manual tracks put the whole cue in one seg with no offset; inventing word
-    timings for them by dividing the duration would be a fabrication that
-    later code could not tell from real data.
+    Manual tracks have none, and dividing the duration would fabricate them.
     """
     words = []
     has_offsets = False

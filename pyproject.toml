@@ -6,12 +6,12 @@ build-backend = "hatchling.build"
 name = "youtube-transcript-notes"
 # Keep package metadata and `--version` on one source of truth.
 dynamic = ["version"]
-description = "Turn lecture videos into readable, citable study material."
+description = "Turn captioned videos — lectures, talks, podcasts — into readable, citable notes."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["lecture", "transcript", "captions", "citation", "study-notes"]
+keywords = ["youtube", "transcript", "captions", "lecture", "podcast", "citation", "study-notes", "obsidian"]
 dependencies = []
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -20,11 +20,11 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Education",
     "Topic :: Multimedia :: Video",
     "Topic :: Text Processing :: Linguistic",
@@ -40,25 +40,22 @@ Issues = "https://github.com/ekelly95/youtube-transcript-notes/issues"
 # Acquisition stays optional so parsing and rendering have no third-party
 # dependencies. Keep yt-dlp floor-only: upgrading is the normal repair after a
 # YouTube change; `_require_shape` and the live canary check compatibility.
-youtube = ["yt-dlp>=2024.1.1"]
+# `[default]` brings yt-dlp-ejs, which YouTube extraction needs since 2025.11.12.
+youtube = ["yt-dlp[default]>=2025.11.12"]
 dev = ["pytest>=8.3", "coverage>=7.6", "ruff>=0.6", "mypy>=1.11"]
 
 [project.scripts]
 youtube-transcript-notes = "youtube_transcript_notes.__main__:main"
 
 [tool.hatch.version]
-path = "src/youtube_transcript_notes/__init__.py"
+path = "src/youtube_transcript_notes/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/youtube_transcript_notes"]
 
 [tool.hatch.build.targets.sdist]
-# Tests contain CC BY-NC-SA caption fixtures and must not enter the MIT package.
-#
-# The contributor and agent files stay out too. They are repo-local instructions
-# — `AGENTS.md` and `CLAUDE.md` are byte twins, so shipping one and not the
-# other picks a vendor for no reason, and none of the three tells someone who
-# installed the package anything they can act on.
+# Tests hold CC BY-NC-SA caption fixtures and must not enter the MIT package.
+# Agent and contributor files are repo-local instructions and stay out too.
 include = [
     "/src",
     "/README.md",
@@ -80,7 +77,7 @@ markers = [
 
 [tool.ruff]
 src = ["src", "tests"]
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # Pin the rule set so a Ruff upgrade does not silently redefine the gate.
@@ -96,25 +93,15 @@ select = [
 ]
 
 [tool.mypy]
-# The package ships `py.typed`, so anything installing it type-checks against
-# these annotations. Strict is the only setting that makes that marker a
-# promise rather than a claim: without it the checker agrees with whatever is
-# written, including nothing at all.
-#
-# `src` only. Nothing installs the tests, so their annotations are a promise to
-# nobody, and the shortcuts they take deliberately — a `TrackHandle` holding no
-# provider because nothing will fetch it, a stub standing in for a response —
-# are the point of a test rather than a defect in one. They cannot be given a
-# relaxed profile either: a `module` override needs a package name, and
-# `tests/` has no `__init__.py` because `conftest` is imported by name.
+# The package ships `py.typed`, so `src` is checked strictly. Tests are out of
+# scope: nothing installs them, and their deliberate shortcuts (stubs, handles
+# with no provider) are the point of a test.
 files = ["src"]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-# yt-dlp ships no type information. Its results are `Any` by necessity, which
-# is why `_require_shape` checks the shape at runtime instead — see the `Info`
-# alias in `sources/youtube.py`.
+# yt-dlp ships no types; `_require_shape` checks its results at runtime.
 module = ["yt_dlp.*"]
 ignore_missing_imports = true
 

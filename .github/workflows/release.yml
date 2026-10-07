@@ -26,7 +26,7 @@ jobs:
       # cheaper to catch here than after an upload that cannot be taken back.
       - name: The tag names the version being built
         run: |
-          version=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"(.+)\"', pathlib.Path('src/youtube_transcript_notes/__init__.py').read_text()).group(1))")
+          version=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"(.+)\"', pathlib.Path('src/youtube_transcript_notes/_version.py').read_text()).group(1))")
           tag=${GITHUB_REF_NAME#v}
           if [ "$version" != "$tag" ]; then
             echo "::error::tag $tag does not match __version__ $version"
