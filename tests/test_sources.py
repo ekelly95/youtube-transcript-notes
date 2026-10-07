@@ -7,7 +7,7 @@ two-stage design quietly becomes one stage that always pays full price.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -33,7 +33,7 @@ from youtube_transcript_notes.resolve import (
 )
 from youtube_transcript_notes.sources import LocalProvider, provider_for
 
-FIXED_TIME = datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc)
+FIXED_TIME = datetime(2026, 8, 6, 14, 30, tzinfo=UTC)
 
 #: Paragraphs in the measured lecture's human track. Pinned rather than
 #: bounded: a paragraphing change that silently halved or doubled the number of
@@ -476,11 +476,11 @@ class TestProviderContract:
         assert LocalProvider().expand(source) == Expansion(sources=(source,))
 
     def test_the_default_clock_is_the_real_one(self) -> None:
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         stamped = LocalProvider().now()
 
         assert stamped.tzinfo is not None
-        assert before <= stamped <= datetime.now(timezone.utc)
+        assert before <= stamped <= datetime.now(UTC)
 
 
 class TestProviderSelection:

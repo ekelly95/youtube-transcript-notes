@@ -13,7 +13,7 @@ speech recognition.
 
 ## Quick start
 
-Python 3.10 or newer. There are two ways in, depending on whether you want the
+Python 3.11 or newer. There are two ways in, depending on whether you want the
 agent workflow or only the command-line tool.
 
 ### Install the command-line tool
@@ -301,7 +301,7 @@ which is what makes the shipped `py.typed` marker a promise rather than a
 claim.
 
 Every push runs the full matrix: Linux, Windows and macOS across Python
-3.10–3.14. The live canary is not part of it, because GitHub's runners are
+3.11–3.15. The live canary is not part of it, because GitHub's runners are
 datacenter addresses and YouTube blocks them — run it yourself before a
 release.
 

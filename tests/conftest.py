@@ -9,7 +9,7 @@ without any of them needing to build a `Lecture` by hand.
 from __future__ import annotations
 
 import socket
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -138,7 +138,7 @@ def hostile_lecture() -> Lecture:
             tier=TrustTier.MANUAL,
             language="en",
             caption_format="json3",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="c" * 64,
         ),
     )
@@ -203,7 +203,7 @@ def full_lecture() -> Lecture:
             tier=TrustTier.MANUAL,
             language="en",
             caption_format="json3",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="a" * 64,
             source_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ),
@@ -227,7 +227,7 @@ def minimal_lecture() -> Lecture:
             tier=TrustTier.ASR_PLATFORM,
             language="en",
             caption_format="vtt",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="b" * 64,
         ),
     )

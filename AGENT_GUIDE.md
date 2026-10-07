@@ -110,7 +110,7 @@ scope: nothing installs them, and the shortcuts they take on purpose — a
 of a test rather than a defect in one.
 
 CI runs the whole matrix on every push: Linux, Windows and macOS across Python
-3.10–3.14, plus lint, types, and a build that checks the distribution metadata,
+3.11–3.15, plus lint, types, and a build that checks the distribution metadata,
 that no caption fixture reached the sdist, and that `py.typed` reached the
 wheel.
 

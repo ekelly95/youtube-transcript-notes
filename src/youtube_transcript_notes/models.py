@@ -12,7 +12,7 @@ import hashlib
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from .errors import MalformedLecture
@@ -83,7 +83,7 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-class TrustTier(str, Enum):
+class TrustTier(StrEnum):
     """How far the text can be trusted.
 
     Drives track priority (`rank`), the prose shown in bylines (`prose`), and

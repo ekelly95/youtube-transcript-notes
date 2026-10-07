@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -236,7 +236,7 @@ class TestProvenance:
             tier=TrustTier.ASR_PLATFORM,
             language="en",
             caption_format="json3",
-            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=timezone.utc),
+            retrieved_at=datetime(2026, 8, 6, 14, 30, tzinfo=UTC),
             content_hash="c" * 64,
         )
         restored = Provenance.from_dict(provenance.to_dict())
