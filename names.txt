@@ -57,7 +57,6 @@ TUI: the 2E part
 MCP: MCB, MCB protocol, MC client
 promptfoo: Prompt Food
 Aider: Ada
-BLEU: BLUE
 GPT-4o: GP 4.0
 All Hands AI: All Hand AI
 OpenDevin: Open Devon
