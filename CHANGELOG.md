@@ -6,6 +6,16 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+**Fixes**
+
+- A video with only automatic captions is fetched from its original track
+  (`en-orig`) rather than the plain `en` beside it. Both are the same
+  transcription, but current yt-dlp lists `en` first, and YouTube serves it
+  through its translation endpoint, which answered HTTP 429 long before the
+  original did.
+
 ## 0.4.0
 
 Brought up to date with yt-dlp and Python as they stand in October 2026, and

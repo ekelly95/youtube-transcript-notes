@@ -392,7 +392,13 @@ class YouTubeProvider(SourceProvider):
         ]
 
         for captions, spoken_language in groups:
-            for raw_language, entries in captions.items():
+            # Originals first, so they win ties in `find`: a plain `en` beside
+            # `en-orig` is served through YouTube's translation endpoint
+            # (`tlang`), which is rate-limited far sooner than the original.
+            ordered = sorted(
+                captions.items(), key=lambda item: not _is_original(item[0])
+            )
+            for raw_language, entries in ordered:
                 tier = _tier_for(raw_language, spoken_language)
                 for entry in entries or ():
                     # Skipped, not trusted; `_explain_empty_manifest` reports
@@ -572,6 +578,11 @@ def _explain_empty_manifest(info: Info, source: str) -> NoReturn:
     )
 
 
+def _is_original(raw_language: str) -> bool:
+    """yt-dlp's marker for the transcription the other automatic tracks translate."""
+    return raw_language.lower().endswith(_ORIGINAL_SUFFIX)
+
+
 def _tier_for(raw_language: str, spoken_language: str | None) -> TrustTier:
     """Classify one caption track.
 
@@ -582,7 +593,7 @@ def _tier_for(raw_language: str, spoken_language: str | None) -> TrustTier:
         return TrustTier.MANUAL
 
     language = raw_language.lower()
-    if language.endswith(_ORIGINAL_SUFFIX):
+    if _is_original(language):
         # yt-dlp's marker for the original transcription — trusted even when
         # the video declares no language to compare against.
         return TrustTier.ASR_PLATFORM
