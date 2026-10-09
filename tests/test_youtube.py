@@ -177,6 +177,20 @@ class TestTrustTiers:
 
         assert manifest.find(["en"]).track.tier is TrustTier.ASR_PLATFORM
 
+    def test_the_original_track_wins_the_tie_with_its_plain_twin(
+        self, info: dict
+    ) -> None:
+        """`en` and `en-orig` are both `asr_platform`, but plain `en` is fetched
+        through YouTube's translation endpoint, which answers HTTP 429 long
+        before the original does. Current yt-dlp lists `en` first (the fixture
+        predates that), so the tie must be broken deliberately."""
+        automatic = info["automatic_captions"]
+        plain_first = {"en": automatic["en"], **automatic}
+        no_manual = {**info, "subtitles": {}, "automatic_captions": plain_first}
+        manifest = YouTubeProvider(extractor=lambda url: no_manual).list(WATCH_URL)
+
+        assert manifest.find(["en"]).track.raw_language == "en-orig"
+
 
 class TestTrackSelection:
     def test_the_default_choice_is_human_written_json3(
