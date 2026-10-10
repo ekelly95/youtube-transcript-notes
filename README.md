@@ -168,6 +168,11 @@ deliberately stripped of everything citable:
 | `asr_local` | Captions made by a separate transcription tool | Depends on that tool |
 | `translated` | Machine-translated transcription | Use for gist, not quotation |
 
+A `manual` track in a language other than the one spoken is a translation,
+however carefully a person wrote it. YouTube lists such tracks as `manual` —
+the MIT lecture used in the tests has human-written Arabic and Chinese tracks
+— so quote one only as a translation.
+
 A note may also carry two marks of the captioner's own uncertainty:
 `(inaudible)` where they could not make the words out, and `(?)` after a word
 they guessed at — `a cure(?)` keeps the guess with the doubt attached.

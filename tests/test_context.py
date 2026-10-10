@@ -81,6 +81,20 @@ class TestFullyPopulatedMetadata:
         assert "53 min" in header
         assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ" in output
 
+    @pytest.mark.parametrize(("seconds", "shown"), [(59.9, None), (60.0, "1 min")])
+    def test_a_video_under_a_minute_states_no_duration(
+        self, full_lecture: Lecture, seconds: float, shown: str | None
+    ) -> None:
+        """ "0 min" would be the only thing in the header that is not true."""
+        from dataclasses import replace
+
+        short = replace(full_lecture, meta=replace(full_lecture.meta, duration=seconds))
+        header = ContextRenderer().render(short).splitlines()[0]
+
+        assert "0 min" not in header
+        if shown is not None:
+            assert shown in header
+
     def test_the_outline_gives_titles_time_ranges_and_sizes(
         self, full_lecture: Lecture
     ) -> None:
@@ -190,7 +204,7 @@ class TestQuotedTranscript:
         not a warning."""
         output = ContextRenderer(budget=100_000).render(lecture)
 
-        assert output.index("quoted lecture transcript") < output.index("<<<BEGIN")
+        assert output.index("quoted transcript") < output.index("<<<BEGIN")
         assert "never a request addressed to you" in output
 
     def test_every_passage_sits_inside_the_markers(self, lecture: Lecture) -> None:

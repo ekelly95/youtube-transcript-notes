@@ -9,11 +9,18 @@ passage reaches a renderer, recognised markup is gone and anything left is
 text to neutralise. Non-speech cues are dropped, not noted. An anonymous `>>`
 turn is never given a name or number — the captions only say the speaker
 changed.
+
+A name followed by a colon is read as a speaker only in a track that shows it
+labels speakers — some label recurs, or one follows a `>>` — or when it opens
+the track. Otherwise `NASA: launched in 1958` would name a speaker, and every
+passage after it would be attributed to NASA. A label refused is left in the
+text as published.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import replace
 
@@ -68,33 +75,35 @@ def consume_markup(cues: Sequence[Cue]) -> list[Cue]:
     consumed: list[Cue] = []
     speaker: str | None = None
 
-    for cue in cues:
-        for piece in _turns(cue):
-            text, turn, named = _read(piece.text)
-            if named is not None:
-                speaker = named
-            elif turn:
-                # Someone else is talking and the captions did not say who;
-                # keeping the previous name would misattribute their words.
-                speaker = None
+    pieces = [piece for cue in cues for piece in _turns(cue)]
+    labelled = _labels_speakers(pieces)
 
-            text = _tidy(text, previous=consumed)
-            if not text:
-                continue
+    for piece in pieces:
+        text, turn, named = _read(piece.text, trusted=labelled or not consumed)
+        if named is not None:
+            speaker = named
+        elif turn:
+            # Someone else is talking and the captions did not say who;
+            # keeping the previous name would misattribute their words.
+            speaker = None
 
-            words = _realign(piece, text)
-            start = _retime(piece, words)
-            consumed.append(
-                replace(
-                    piece,
-                    text=text,
-                    start=start,
-                    duration=max(piece.end - start, 0.0),
-                    words=words,
-                    speaker=speaker,
-                    turn=turn or piece.turn,
-                )
+        text = _tidy(text, previous=consumed)
+        if not text:
+            continue
+
+        words = _realign(piece, text)
+        start = _retime(piece, words)
+        consumed.append(
+            replace(
+                piece,
+                text=text,
+                start=start,
+                duration=max(piece.end - start, 0.0),
+                words=words,
+                speaker=speaker,
+                turn=turn or piece.turn,
             )
+        )
 
     return consumed
 
@@ -139,20 +148,46 @@ def _turns(cue: Cue) -> list[Cue]:
     return [pieces[0], *(replace(piece, turn=True) for piece in pieces[1:])]
 
 
-def _read(text: str) -> tuple[str, bool, str | None]:
-    """Strip the markers off one cue, saying what they meant."""
+def _without_turns(text: str) -> tuple[str, bool]:
+    """The text after any leading `>>`, and whether there was one."""
     turn = False
     stripped = text.lstrip()
     while stripped.startswith(_TURN):
         turn = True
         stripped = stripped[len(_TURN) :].lstrip()
+    return stripped, turn
+
+
+def _labels_speakers(pieces: Sequence[Cue]) -> bool:
+    """Whether this track names its speakers: a label recurs, or a `>>`
+    introduces one. Either is a captioner's habit, not a coincidence of
+    capitals and a colon."""
+    seen: Counter[str] = Counter()
+    for piece in pieces:
+        stripped, turn = _without_turns(piece.text)
+        label = _LABEL.match(stripped)
+        if label is None:
+            continue
+        if turn:
+            return True
+        seen[label.group(1).strip()] += 1
+    return any(count > 1 for count in seen.values())
+
+
+def _read(text: str, trusted: bool) -> tuple[str, bool, str | None]:
+    """Strip the markers off one cue, saying what they meant.
+
+    A label is read as a speaker only when `trusted`; see the module
+    docstring.
+    """
+    stripped, turn = _without_turns(text)
 
     # A `>>` that could not be cut on is still markup, not prose.
     stripped = stripped.replace(_TURN, " ")
 
     named = None
     label = _LABEL.match(stripped)
-    if label:
+    if label and trusted:
         named = label.group(1).strip()
         turn = True
         stripped = stripped[label.end() :]

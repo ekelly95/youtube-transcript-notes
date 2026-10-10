@@ -195,7 +195,7 @@ def propose_corrections(
                     wrong=phrase,
                     right=term,
                     at=passage.start,
-                    confidence=1.0 if distance == 0 else round(1.0 - distance / 10, 2),
+                    distance=distance,
                     evidence=origin,
                 )
             )
@@ -208,7 +208,7 @@ def _matches(
     by_length: dict[int, list[tuple[str, str]]],
     known: set[str],
     variants: Mapping[str, tuple[str, str]],
-) -> Iterable[tuple[str, str, str, int]]:
+) -> Iterable[tuple[str, str, str, int | None]]:
     spans = [match.span() for match in _WORD.finditer(text)]
     hits = []
 
@@ -233,14 +233,16 @@ def _hit(
     terms: list[tuple[str, str]],
     known: set[str],
     variants: Mapping[str, tuple[str, str]],
-) -> tuple[str, str, str, int] | None:
+) -> tuple[str, str, str, int | None] | None:
+    """A correction for this phrase: (as written, right, origin, distance).
+    Distance is None for a wrong form named outright."""
     folded = _fold(phrase)
     if not folded:
         return None
 
     named = variants.get(folded)
     if named is not None:
-        return phrase.strip(_EDGES), named[0], named[1], 0
+        return phrase.strip(_EDGES), named[0], named[1], None
 
     # Already one of the spellings being checked against — either right, or
     # right about something else. Not an error either way.

@@ -226,8 +226,17 @@ class TestKnownWrongForms:
         glossary = read_glossary("Claude Code: quad code, Squad code")
         found = propose_corrections([passage("open quad code and run it")], glossary)
 
-        assert [(c.wrong, c.right, c.confidence) for c in found] == [
-            ("quad code", "Claude Code", 1.0)
+        # Four edits away, but named outright: no distance is claimed.
+        assert [(c.wrong, c.right, c.distance) for c in found] == [
+            ("quad code", "Claude Code", None)
+        ]
+
+    def test_a_near_miss_records_how_near(self) -> None:
+        glossary = read_glossary("Karpathy")
+        found = propose_corrections([passage("as Karpathi said")], glossary)
+
+        assert [(c.wrong, c.right, c.distance) for c in found] == [
+            ("Karpathi", "Karpathy", 1)
         ]
 
     def test_comments_and_blank_lines_are_ignored(self) -> None:

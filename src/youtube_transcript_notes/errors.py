@@ -106,23 +106,27 @@ class TranscriptError(Exception):
 
 
 class SourceError(TranscriptError):
-    """A lecture could not be reached, or is not the kind of thing we can use."""
+    """A source could not be reached, or is not the kind of thing we can use.
+
+    Class names and codes still say "lecture": codes are stable, and renaming
+    the classes would break callers for no gain. The prose says "video".
+    """
 
     CODE = "SOURCE_ERROR"
-    CAUSE = "The lecture at {source!r} could not be retrieved."
+    CAUSE = "{source!r} could not be retrieved."
 
 
 class LectureUnavailable(SourceError):
     CODE = "LECTURE_UNAVAILABLE"
     CAUSE = (
-        "The lecture at {source!r} is not available. It may have been deleted, "
-        "made private, or the identifier may be wrong."
+        "{source!r} is not available. It may have been deleted, made private, "
+        "or the identifier or path may be wrong."
     )
     TRY = (
-        "Check the URL or video ID in a browser.",
+        "Check the URL or video ID in a browser, or the path on disk.",
         (
-            "Search for a re-upload — lecture series are often mirrored on a "
-            "department or course channel."
+            "Search for a re-upload — courses, talks and podcasts are often "
+            "mirrored on the publisher's own channel."
         ),
     )
 
@@ -130,11 +134,11 @@ class LectureUnavailable(SourceError):
 class AgeRestricted(SourceError):
     CODE = "AGE_RESTRICTED"
     CAUSE = (
-        "The lecture at {source!r} is age-restricted, so its captions cannot be "
+        "The video at {source!r} is age-restricted, so its captions cannot be "
         "retrieved without an authenticated session."
     )
     TRY = (
-        "Look for the same lecture on the institution's own site or course page.",
+        "Look for the same video on the publisher's own site.",
         (
             "If you can get its captions as a file — course platforms usually "
             "let enrolled students download one — pass that file's path "
@@ -145,9 +149,9 @@ class AgeRestricted(SourceError):
 
 class RegionBlocked(SourceError):
     CODE = "REGION_BLOCKED"
-    CAUSE = "The lecture at {source!r} is not available in this region."
+    CAUSE = "The video at {source!r} is not available in this region."
     TRY = (
-        "Check whether the hosting institution publishes the lecture elsewhere.",
+        "Check whether the publisher posts the video elsewhere.",
         "Look for an official mirror or course archive.",
     )
 
@@ -195,7 +199,7 @@ class RateLimited(SourceError):
 
 
 class PlaylistNotSupported(SourceError):
-    """A collection, where a single lecture was expected.
+    """A collection, where a single video was expected.
 
     Otherwise a collection would be misreported as a video with no captions.
     Playlists are expanded before discovery, so from the CLI this names what is
@@ -205,11 +209,11 @@ class PlaylistNotSupported(SourceError):
     CODE = "PLAYLIST_NOT_SUPPORTED"
     CAUSE = (
         "{source!r} names a channel, search page or other collection rather "
-        "than one lecture."
+        "than one video."
     )
     TRY = (
         (
-            "Open it and pass the lecture or playlist URLs you want — a "
+            "Open it and pass the video or playlist URLs you want — a "
             "playlist is expanded into its videos automatically."
         ),
         (
@@ -231,7 +235,7 @@ class PlaylistTooLarge(SourceError):
         "refused outright rather than quietly cut short."
     )
     TRY = (
-        "Pass a smaller playlist, or the individual lecture URLs you want.",
+        "Pass a smaller playlist, or the individual video URLs you want.",
         (
             "The ceiling is MAX_PLAYLIST_ITEMS in "
             "youtube_transcript_notes/limits.py, with the reasoning."
@@ -257,7 +261,7 @@ class PlaylistEmpty(SourceError):
 
 
 class SeveralLectures(SourceError):
-    """A folder holding more than one lecture, where one was expected.
+    """A folder holding captions for more than one video, where one was expected.
 
     The CLI expands folders first, so this is what a library caller meets on
     handing `list` a course directory.
@@ -265,16 +269,16 @@ class SeveralLectures(SourceError):
 
     CODE = "SEVERAL_LECTURES"
     CAUSE = (
-        "The folder {source!r} holds {count} lectures, and a manifest "
-        "describes one:\n{lectures}"
+        "The folder {source!r} holds captions for {count} videos, and a "
+        "manifest describes one:\n{lectures}"
     )
     TRY = (
         "Pass one of them — its path, or its name without the extension.",
         (
-            "From the command line, pass the folder: each lecture in it is "
-            "processed on its own, and one failure costs one lecture."
+            "From the command line, pass the folder: each video in it is "
+            "processed on its own, and one failure costs one video."
         ),
-        "As a library, call expand() first — it names one source per lecture.",
+        "As a library, call expand() first — it names one source per video.",
     )
 
     def __init__(self, **context: Any) -> None:
@@ -315,7 +319,7 @@ class TransportContractChanged(SourceError):
         ),
         (
             "Check the seam directly: pytest -m canary, from a clone. It says "
-            "whether the transport or the lecture is at fault."
+            "whether the transport or the video is at fault."
         ),
     )
 
@@ -364,7 +368,7 @@ class AcquisitionFailed(SourceError):
 
 
 class CaptionError(TranscriptError):
-    """The lecture exists, but usable caption data does not."""
+    """The video exists, but usable caption data does not."""
 
     CODE = "CAPTION_ERROR"
     CAUSE = "No usable captions could be produced for {source!r}."
@@ -372,9 +376,9 @@ class CaptionError(TranscriptError):
 
 class NoCaptionsAvailable(CaptionError):
     CODE = "NO_CAPTIONS_AVAILABLE"
-    CAUSE = "The lecture at {source!r} has no caption tracks of any kind."
+    CAUSE = "{source!r} has no caption tracks of any kind."
     TRY = (
-        "Check whether the same lecture is posted elsewhere with captions.",
+        "Check whether the same video is posted elsewhere with captions.",
         (
             "Captions are required: this tool reads them, it does not create "
             "them. If you can get a transcript as a caption file (.srt, .vtt "
@@ -400,8 +404,8 @@ class PayloadTooLarge(CaptionError):
     )
     TRY = (
         (
-            "Check the file is what you think it is. Nothing a lecture "
-            "produces comes close to this — the usual cause is a wrong path, "
+            "Check the file is what you think it is. No real caption track "
+            "comes close to this — the usual cause is a wrong path, "
             "a concatenated dump, or a download that captured a whole page."
         ),
         ("If the source really is this large, split it and pass the parts separately."),
@@ -457,7 +461,7 @@ class MalformedCaptions(CaptionError):
     CODE = "MALFORMED_CAPTIONS"
     CAUSE = "The {fmt} caption data for {source!r} could not be parsed: {detail}"
     TRY = (
-        "Try a different caption format for the same lecture.",
+        "Try a different caption format for the same video.",
         (
             "Capture the payload as a test fixture — a parser that meets real data "
             "it cannot handle is a bug worth pinning down."
@@ -487,9 +491,9 @@ class MalformedLecture(TranscriptError):
     """A serialised lecture could not be read back."""
 
     CODE = "MALFORMED_LECTURE"
-    CAUSE = "Stored lecture data could not be read: {detail}"
+    CAUSE = "Stored transcript data could not be read: {detail}"
     TRY = (
-        "Delete the cached entry and re-fetch the lecture.",
+        "Delete the cached entry and fetch the video again.",
         (
             "If this followed an upgrade, the schema version has moved on and the "
             "cache needs clearing."
@@ -599,8 +603,8 @@ class OutputExists(OutputError):
 
     CODE = "OUTPUT_EXISTS"
     CAUSE = (
-        "{path} already exists and differs from this lecture, so it was left "
-        "alone and nothing was written."
+        "{path} already exists and differs from what this run would write, "
+        "so it was left alone and nothing was written."
     )
     TRY = (
         "Pass --force to replace files that are already there.",

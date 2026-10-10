@@ -109,7 +109,7 @@ class TestSpeakers:
             [
                 cue("GRAHAM NEUBIG: Hi."),
                 cue("Today we will look at agents."),
-                cue("AUDIENCE: A question."),
+                cue(">> AUDIENCE: A question."),
                 cue("Is that always true?"),
             ]
         )
@@ -121,6 +121,70 @@ class TestSpeakers:
             "AUDIENCE",
         ]
         assert [k.turn for k in kept] == [True, False, True, False]
+
+    def test_a_capitalised_word_and_a_colon_mid_track_is_not_a_speaker(
+        self,
+    ) -> None:
+        """`NASA: launched in 1958` has a label's shape. Read as one, it named
+        a speaker and attributed every following passage to NASA."""
+        kept = consume_markup(
+            [cue("The agency came first."), cue("NASA: launched in 1958.")]
+        )
+
+        assert kept[1].text == "NASA: launched in 1958."
+        assert kept[1].speaker is None
+        assert kept[1].turn is False
+
+    def test_a_label_that_recurs_is_a_speaker_wherever_it_appears(self) -> None:
+        kept = consume_markup(
+            [
+                cue("Welcome back."),
+                cue("PROFESSOR: Last time we saw peaks."),
+                cue(">> STUDENT: Why one?"),
+                cue("PROFESSOR: Because one is enough."),
+            ]
+        )
+
+        assert [k.speaker for k in kept] == [None, "PROFESSOR", "STUDENT", "PROFESSOR"]
+        assert kept[1].text == "Last time we saw peaks."
+
+    def test_a_label_said_once_counts_in_a_track_that_labels_speakers(
+        self,
+    ) -> None:
+        """MIT's captioner names ERIK DOMANE once, between two PROFESSOR
+        labels. The track has shown it labels speakers, so this is one."""
+        kept = consume_markup(
+            [
+                cue("Welcome back."),
+                cue("PROFESSOR: Hi."),
+                cue("ERIK DOMANE: Hi."),
+                cue("PROFESSOR: And we begin."),
+            ]
+        )
+
+        assert [k.speaker for k in kept] == [
+            None,
+            "PROFESSOR",
+            "ERIK DOMANE",
+            "PROFESSOR",
+        ]
+
+    def test_a_label_after_a_turn_marker_marks_the_track_as_labelled(
+        self,
+    ) -> None:
+        kept = consume_markup(
+            [cue("Welcome back."), cue(">> HOST: Hello."), cue("GUEST: Thanks.")]
+        )
+
+        assert [k.speaker for k in kept] == [None, "HOST", "GUEST"]
+
+    def test_a_label_after_a_dropped_opening_cue_still_opens_the_track(
+        self,
+    ) -> None:
+        """`[MUSIC]` is not speech, so the label is still the first thing said."""
+        kept = consume_markup([cue("[MUSIC]"), cue("GRAHAM NEUBIG: Hi.")])
+
+        assert [(k.speaker, k.text) for k in kept] == [("GRAHAM NEUBIG", "Hi.")]
 
     def test_an_ordinary_sentence_with_a_colon_is_not_a_label(self) -> None:
         (kept,) = consume_markup([cue("So here is the thing: it does not scale.")])

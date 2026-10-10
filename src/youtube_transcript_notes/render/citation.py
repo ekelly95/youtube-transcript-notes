@@ -6,6 +6,8 @@ by a recogniser — the difference that matters most for technical vocabulary.
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 from ..models import (
     MONTH_NAMES,
     Lecture,
@@ -66,10 +68,18 @@ def _apa_date(meta: LectureMeta) -> str:
     return f"{published.year}, {month} {published.day}"
 
 
+def _utc(moment: datetime) -> date:
+    """The UTC calendar date: providers stamp retrieval in UTC, and a naive
+    stamp read back from older JSONL is taken to be UTC already."""
+    if moment.tzinfo is None:
+        return moment.date()
+    return moment.astimezone(UTC).date()
+
+
 def _note(provenance: Provenance) -> str:
     source = provenance.tier.prose
     return (
-        f"Transcript retrieved {format_date(provenance.retrieved_at.date())} "
-        f"from {source} ({provenance.language}, {provenance.caption_format}). "
+        f"Transcript retrieved {format_date(_utc(provenance.retrieved_at))} "
+        f"(UTC) from {source} ({provenance.language}, {provenance.caption_format}). "
         f"Content hash: {provenance.content_hash[:12]}."
     )
