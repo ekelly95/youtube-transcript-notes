@@ -6,7 +6,12 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
-## Unreleased
+## 0.5.0
+
+Fixes from an outside audit. Trust tiers now say only what is known about
+a track, the starter glossary no longer marks ordinary English as a
+misheard name, and the `video-notes` skill keeps a summary to what the
+transcript says.
 
 **Breaking changes**
 
@@ -27,26 +32,6 @@ changes.
   "Confidence 0.90" as if measured. JSONL lines carry `distance`, and older
   lines with `confidence` still read. The Markdown appendix column is now
   "Match" ("named", "1 edit").
-
-**Skill**
-
-- `video-notes` binds summaries to the transcript: every statement traces to
-  a timestamp, no background knowledge is added, a non-`manual` track is named
-  up front, and an `## Omitted` block is reproduced verbatim. It also says the
-  tool chooses the track, and that a `manual` track in another language is a
-  translation.
-- Tests check that every command in a skill parses with the real CLI parser
-  and that any glossary it names exists.
-
-**Tests**
-
-- The 2011 automatic track's vtt and json3 encodings now have to agree on
-  every paragraph stamp, not only on the words: each of the 61 vtt stamps is
-  the json3 time of its opening word.
-- Stamp checks match the instance of the opening word, not any time the word
-  was said. The context budget test checks the output fits and that the next
-  passage would not, instead of a loose upper bound. Paragraph counts are pinned
-  beside the p95 length band.
 
 **Fixes**
 
@@ -82,6 +67,26 @@ changes.
   extra that carries YouTube's challenge solver.
 - A non-text `language` field from yt-dlp is ignored rather than failing the
   listing with advice to retry.
+
+**Skill**
+
+- `video-notes` binds summaries to the transcript: every statement traces to
+  a timestamp, no background knowledge is added, a non-`manual` track is named
+  up front, and an `## Omitted` block is reproduced verbatim. It also says the
+  tool chooses the track, and that a `manual` track in another language is a
+  translation.
+- Tests check that every command in a skill parses with the real CLI parser
+  and that any glossary it names exists.
+
+**Tests**
+
+- The 2011 automatic track's vtt and json3 encodings now have to agree on
+  every paragraph stamp, not only on the words: each of the 61 vtt stamps is
+  the json3 time of its opening word.
+- Stamp checks match the instance of the opening word, not any time the word
+  was said. The context budget test checks the output fits and that the next
+  passage would not, instead of a loose upper bound. Paragraph counts are pinned
+  beside the p95 length band.
 
 ## 0.4.0
 
