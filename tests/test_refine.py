@@ -164,6 +164,8 @@ class TestPolicySelection:
             (TrustTier.ASR_PLATFORM, "json3", False),
             (TrustTier.MANUAL, "vtt", False),
             (TrustTier.MANUAL, "json3", False),
+            # Unknown origin: deduplicating a clean track deletes real words.
+            (TrustTier.UNMARKED, "vtt", False),
             (TrustTier.ASR_LOCAL, "vtt", False),
             (TrustTier.TRANSLATED, "vtt", False),
         ],

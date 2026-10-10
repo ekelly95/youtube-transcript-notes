@@ -11,6 +11,11 @@ file, apply its machine-specific output folder and post-processing defaults.
 
 ## Workflow
 
+A caption file downloaded with yt-dlp's `--write-auto-subs` is named
+`NAME.en.vtt` but holds automatic captions. Rename it `NAME.auto.en.vtt`
+before rendering, so its rolling repetition is removed and it is not reported
+as `unmarked`.
+
 1. Inspect available tracks without downloading captions:
 
    ```bash
@@ -22,6 +27,7 @@ file, apply its machine-specific output folder and post-processing defaults.
    | Tier | Treatment |
    |---|---|
    | `manual` | Quote directly |
+   | `unmarked` | A local file that does not say who wrote it; ask or check before quoting |
    | `asr_platform` | Disclose automatic captions; verify technical terms before quoting |
    | `asr_local` | State that quality depends on the separate transcription tool |
    | `translated` | Use for gist only; do not quote |

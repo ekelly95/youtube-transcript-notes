@@ -46,8 +46,12 @@ left behind after its original was removed.
   overlap merging to a clean track can delete legitimate repeated words.
 - Detect punctuation from content. A wrong punctuation guess changes paragraph
   breaks; a wrong deduplication guess destroys text.
-- Unmarked local caption files are `manual`. Automatic local files must include
-  `.auto.`; the tier controls deduplication.
+- Unmarked local caption files are `unmarked`: they claim no authorship and
+  are never deduplicated. yt-dlp names automatic captions `NAME.en.vtt`, so
+  assuming human-written would be wrong for the commonest local file, and
+  assuming automatic would delete legitimate repetition from a clean one.
+  Automatic local files must include `.auto.`; the tier controls
+  deduplication.
 - Filename languages use the maintained `LANGUAGE_CODES` table. The first known
   code wins. Do not accept arbitrary two- or three-letter components such as
   `raw`, `tmp`, or `bak`.

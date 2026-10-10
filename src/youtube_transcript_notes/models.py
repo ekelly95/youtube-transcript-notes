@@ -94,6 +94,11 @@ class TrustTier(StrEnum):
     """Human-written captions. Usually accurate on technical vocabulary, which
     is exactly where speech recognition fails hardest."""
 
+    UNMARKED = "unmarked"
+    """A local caption file whose name carries no tier marker. Its origin is
+    unstated — yt-dlp writes automatic captions under exactly such a name — so
+    it is neither deduplicated nor described as human-written."""
+
     ASR_PLATFORM = "asr_platform"
     """The platform's automatic captions. Recent ones are punctuated and cased;
     older tracks are not, and vtt/srt forms repeat text in a rolling window."""
@@ -125,13 +130,15 @@ class TrustTier(StrEnum):
 
 _TIER_RANK = {
     TrustTier.MANUAL: 0,
-    TrustTier.ASR_PLATFORM: 1,
-    TrustTier.ASR_LOCAL: 2,
-    TrustTier.TRANSLATED: 3,
+    TrustTier.UNMARKED: 1,
+    TrustTier.ASR_PLATFORM: 2,
+    TrustTier.ASR_LOCAL: 3,
+    TrustTier.TRANSLATED: 4,
 }
 
 _TIER_PROSE = {
     TrustTier.MANUAL: "human-written captions",
+    TrustTier.UNMARKED: "captions of unstated origin",
     TrustTier.ASR_PLATFORM: "platform auto-generated captions",
     TrustTier.ASR_LOCAL: "locally transcribed audio",
     TrustTier.TRANSLATED: "machine-translated captions",

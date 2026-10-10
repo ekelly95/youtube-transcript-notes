@@ -163,6 +163,7 @@ deliberately stripped of everything citable:
 | Tier | Meaning | Quoting guidance |
 |---|---|---|
 | `manual` | Human-written captions | Quote directly |
+| `unmarked` | A local caption file whose name does not say who wrote it | Find out its origin before quoting |
 | `asr_platform` | YouTube automatic captions | Verify technical terms |
 | `asr_local` | Captions made by a separate transcription tool | Depends on that tool |
 | `translated` | Machine-translated transcription | Use for gist, not quotation |
@@ -193,9 +194,22 @@ it is a template rather than a list. An installed copy does not include it.
 `evidence` fields. Corrections appear as `quad code [Claude Code]` and in an
 appendix. The original caption text remains intact.
 
-Local caption filenames may include tier and language metadata, for example
-`week-01.auto.en.vtt`. Unmarked local captions default to human-written; mark
-automatic files with `.auto.` because the tier controls deduplication.
+Local caption filenames may include tier and language metadata between the
+stem and the extension, for example `week-01.auto.en.vtt`:
+
+| Marker | Tier |
+|---|---|
+| `.manual.`, `.human.` | `manual` |
+| `.auto.`, `.asr.` | `asr_platform` |
+| `.whisper.`, `.transcribed.` | `asr_local` |
+| `.translated.` | `translated` |
+| none | `unmarked` |
+
+The tier controls deduplication: only `asr_platform` vtt and srt tracks have
+their rolling-window repetition removed. yt-dlp's `--write-auto-subs` saves
+automatic captions as `NAME.en.vtt`, with no marker, so rename such a file
+`NAME.auto.en.vtt` before rendering it; left unmarked, it keeps every repeated
+line.
 
 ## Files and cache
 

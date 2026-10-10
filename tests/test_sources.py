@@ -243,7 +243,7 @@ class TestFilenameConvention:
     @pytest.mark.parametrize(
         ("name", "tier"),
         [
-            ("lec.en.vtt", TrustTier.MANUAL),
+            ("lec.en.vtt", TrustTier.UNMARKED),
             ("lec.manual.en.vtt", TrustTier.MANUAL),
             ("lec.human.en.vtt", TrustTier.MANUAL),
             ("lec.auto.en.vtt", TrustTier.ASR_PLATFORM),
@@ -257,11 +257,40 @@ class TestFilenameConvention:
         write(tmp_path, name)
         assert TranscriptFetcher().list(str(tmp_path)).tracks[0].track.tier is tier
 
-    def test_unmarked_files_are_assumed_human_written(self, tmp_path: Path) -> None:
+    def test_unmarked_files_claim_no_origin(self, tmp_path: Path) -> None:
+        """yt-dlp's `--write-auto-subs` writes `NAME.en.vtt`: the commonest
+        local file is automatic captions under an unmarked name. Calling it
+        human-written put that claim in every byline built from one."""
+        write(
+            tmp_path,
+            "lec.en.vtt",
+            "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nthere are words here\n",
+        )
+        lecture = TranscriptFetcher().fetch(str(tmp_path))
+
+        assert lecture.provenance.tier is TrustTier.UNMARKED
+        assert "human-written" not in get_renderer("markdown").render(lecture)
+        assert "captions of unstated origin" in get_renderer("citation").render(lecture)
+
+    def test_a_marked_human_track_outranks_an_unmarked_one(
+        self, tmp_path: Path
+    ) -> None:
         write(tmp_path, "lec.en.vtt")
-        assert (
-            TranscriptFetcher().list(str(tmp_path)).tracks[0].track.tier
-            is TrustTier.MANUAL
+        write(tmp_path, "lec.manual.en.srt")
+
+        assert TranscriptFetcher().list(str(tmp_path)).find(["en"]).track.tier is (
+            TrustTier.MANUAL
+        )
+
+    def test_an_unmarked_track_outranks_a_marked_automatic_one(
+        self, tmp_path: Path
+    ) -> None:
+        """Unmarked may well be human-written; `.auto.` says it is not."""
+        write(tmp_path, "lec.en.vtt")
+        write(tmp_path, "lec.auto.en.srt")
+
+        assert TranscriptFetcher().list(str(tmp_path)).find(["en"]).track.tier is (
+            TrustTier.UNMARKED
         )
 
     def test_files_that_are_not_captions_are_ignored(self, tmp_path: Path) -> None:

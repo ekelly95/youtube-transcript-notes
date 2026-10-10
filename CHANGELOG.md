@@ -8,6 +8,15 @@ changes.
 
 ## Unreleased
 
+**Breaking changes**
+
+- A local caption file with no tier marker in its name is now `unmarked`, not
+  `manual`, and its byline says "captions of unstated origin". yt-dlp's
+  `--write-auto-subs` writes automatic captions under exactly such a name, so
+  those notes were claiming human authorship. `--tiers manual` no longer
+  selects an unmarked file; mark it `.manual.` or pass `--tiers unmarked`. The
+  README now lists every filename marker.
+
 **Fixes**
 
 - A video with only automatic captions is fetched from its original track

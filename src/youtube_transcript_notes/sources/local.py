@@ -6,13 +6,18 @@ a separate transcription tool.
 **Filename convention.** Everything between the stem and the extension is
 metadata::
 
-    6006-lec1.en.json3            English, assumed human-written
+    6006-lec1.manual.en.json3     English, human-written
     6006-lec1.auto.en.json3       English, platform auto-captions
     6006-lec1.whisper.en.vtt      English, locally transcribed
-    lecture.vtt                   language unknown, matches any request
+    6006-lec1.translated.fr.vtt   French, machine-translated
+    6006-lec1.en.json3            English, origin unstated
+    lecture.vtt                   origin and language unstated
 
-Unmarked tracks are `MANUAL`. Mark automatic captions with ``.auto.``: the
-tier decides whether rolling-window deduplication runs.
+Tier markers: ``manual`` or ``human``; ``auto`` or ``asr``; ``whisper`` or
+``transcribed``; ``translated``. Unmarked tracks are `UNMARKED`: nothing says
+who wrote them, and yt-dlp's ``--write-auto-subs`` names automatic captions
+``NAME.en.vtt``. Mark automatic captions with ``.auto.``: the tier decides
+whether rolling-window deduplication runs.
 
 **Folders.** One lecture per stem (the name up to the first dot); files
 sharing it are tracks of one lecture. Not recursive, and unreadable files form
@@ -182,7 +187,7 @@ def _read_markers(parts: list[str]) -> tuple[TrustTier, str]:
         elif language is None and looks_like_language(part):
             language = part
 
-    return tier or TrustTier.MANUAL, language or UNKNOWN_LANGUAGE
+    return tier or TrustTier.UNMARKED, language or UNKNOWN_LANGUAGE
 
 
 def _is_lecture_file(path: Path) -> bool:

@@ -136,15 +136,22 @@ class TestFormatDate:
 
 class TestTrustTier:
     def test_manual_outranks_everything(self) -> None:
-        assert TrustTier.MANUAL.rank < TrustTier.ASR_PLATFORM.rank
+        assert TrustTier.MANUAL.rank < TrustTier.UNMARKED.rank
+        assert TrustTier.UNMARKED.rank < TrustTier.ASR_PLATFORM.rank
         assert TrustTier.ASR_PLATFORM.rank < TrustTier.ASR_LOCAL.rank
         assert TrustTier.ASR_LOCAL.rank < TrustTier.TRANSLATED.rank
 
     def test_only_platform_asr_is_assumed_unpunctuated(self) -> None:
         assert not TrustTier.ASR_PLATFORM.assume_punctuated
         assert TrustTier.MANUAL.assume_punctuated
+        assert TrustTier.UNMARKED.assume_punctuated
         assert TrustTier.ASR_LOCAL.assume_punctuated
         assert TrustTier.TRANSLATED.assume_punctuated
+
+    def test_an_unmarked_track_claims_no_authorship(self) -> None:
+        assert TrustTier.UNMARKED.value == "unmarked"
+        assert "human" not in TrustTier.UNMARKED.prose
+        assert "auto" not in TrustTier.UNMARKED.prose
 
     def test_sort_by_tier_puts_most_trusted_first(self) -> None:
         assert sort_by_tier(
