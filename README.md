@@ -39,7 +39,7 @@ youtube-transcript-notes \
 
 ### Or clone it, for Claude Code and Codex
 
-The bundled skills and the `names.txt` glossary are repository files rather than
+The bundled skills and the `glossaries/` folder are repository files rather than
 part of the installed package, so the agent workflow starts from a clone:
 
 ```bash
@@ -182,13 +182,16 @@ Andrej Karpathy: Andrew Carpet
 ```
 
 ```bash
-python -m youtube_transcript_notes <source> --glossary names.txt
+python -m youtube_transcript_notes <source> --glossary glossaries/agent-engineering.txt
 ```
 
-The repository carries a starter list at
-[`names.txt`](https://github.com/ekelly95/youtube-transcript-notes/blob/main/names.txt).
-It is entirely agent-engineering vocabulary, so on a video from another field
-it is a template rather than a list. An installed copy does not include it.
+The repository keeps one glossary per field in
+[`glossaries/`](https://github.com/ekelly95/youtube-transcript-notes/tree/main/glossaries).
+So far there is
+[`agent-engineering.txt`](https://github.com/ekelly95/youtube-transcript-notes/blob/main/glossaries/agent-engineering.txt),
+for talks on AI coding agents. Use a glossary only for a video in its field.
+Every `wrong` form is marked wherever it appears, so another field's list
+brackets ordinary words. An installed copy does not include the folder.
 
 `--corrections found.json` accepts a list of `wrong`, `right`, and optional
 `evidence` fields. Corrections appear as `quad code [Claude Code]` and in an

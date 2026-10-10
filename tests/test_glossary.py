@@ -11,6 +11,8 @@ door shut.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from youtube_transcript_notes.errors import MalformedCorrections, PayloadTooLarge
@@ -365,3 +367,60 @@ class TestGlossarySizeCeiling:
 
         assert f"{MAX_GLOSSARY_TERMS + 1:,} terms" in caught.value.cause
         assert "names.txt" in caught.value.cause
+
+
+_GLOSSARIES = sorted((Path(__file__).parent.parent / "glossaries").glob("*.txt"))
+
+#: Ordinary English that an earlier glossary bracketed as names: "Ada" as
+#: Aider, "Colab" and "cowork" as Claude Cowork, "azalea" as a researcher.
+_PLAIN_ENGLISH = (
+    (
+        "Ada Lovelace wrote the first published program, and Ada the language "
+        "is named after her."
+    ),
+    (
+        "We ran the notebook in Colab, then moved to a coworking space where "
+        "people cowork all day."
+    ),
+    (
+        "The azalea outside was in bloom. Each essay was graded against a "
+        "rubric, and Rubrik sells backup software."
+    ),
+    (
+        "Clyde wound the clockwork toy. Cloud computing changed everything, "
+        "and the hot code path got faster."
+    ),
+    "The coach said the cold start problem is real. Keon and Chris joined the team.",
+)
+
+
+class TestTheRepositoryGlossaries:
+    """The files `--glossary` is pointed at in practice, not synthetic lists.
+    The skill passes them on every video in their field, so one ordinary word
+    among the wrong forms is bracketed in every note."""
+
+    def test_there_is_at_least_one(self) -> None:
+        assert _GLOSSARIES
+
+    @pytest.mark.parametrize("path", _GLOSSARIES, ids=lambda path: path.name)
+    def test_it_reads(self, path: Path) -> None:
+        assert read_glossary(path.read_text(encoding="utf-8"), path.name).terms
+
+    @pytest.mark.parametrize("path", _GLOSSARIES, ids=lambda path: path.name)
+    def test_plain_english_draws_no_correction(self, path: Path) -> None:
+        glossary = read_glossary(path.read_text(encoding="utf-8"), path.name)
+        passages = [passage(text, float(n)) for n, text in enumerate(_PLAIN_ENGLISH)]
+
+        assert propose_corrections(passages, glossary) == ()
+
+    def test_the_agent_glossary_still_catches_what_it_is_for(self) -> None:
+        path = Path(__file__).parent.parent / "glossaries" / "agent-engineering.txt"
+        glossary = read_glossary(path.read_text(encoding="utf-8"), path.name)
+        found = propose_corrections(
+            [passage("Then I opened quad code and asked Andrew Carpet.")], glossary
+        )
+
+        assert {(c.wrong, c.right) for c in found} == {
+            ("quad code", "Claude Code"),
+            ("Andrew Carpet", "Andrej Karpathy"),
+        }
