@@ -21,6 +21,12 @@ changes.
   "cowork", "azalea", "Rubrik", "clockwork", "Clyde", "hot code" and "cold
   start problem" were being bracketed as names in unrelated sentences. The
   `video-notes` skill passes a glossary only for a video in its field.
+- `Correction.confidence` is replaced by `distance`: the edit distance for a
+  near-miss, or `null` for a wrong form named in a glossary or corrections
+  file. The old number was one minus a tenth of the edit distance, shown as
+  "Confidence 0.90" as if measured. JSONL lines carry `distance`, and older
+  lines with `confidence` still read. The Markdown appendix column is now
+  "Match" ("named", "1 edit").
 
 **Skill**
 
@@ -34,6 +40,18 @@ changes.
 
 **Fixes**
 
+- Notes and cache entries are written with LF line endings on every platform,
+  so a notes folder synced between Windows and other systems no longer changes
+  on every re-render. A CRLF note from an older version still counts as
+  unchanged.
+- A capitalised word and a colon (`NASA: launched in 1958`) is read as a
+  speaker label only in a track that labels speakers, where a label recurs or
+  follows `>>`, or when it opens the track. Before, it named a speaker and
+  attributed everything after it to them.
+- Error messages and the context preamble say "video" rather than "lecture".
+  Error codes and class names are unchanged.
+- The context header leaves out the duration of a video under a minute instead
+  of saying "0 min", and the citation note marks its retrieval date as UTC.
 - A video with only automatic captions is fetched from its original track
   (`en-orig`) rather than the plain `en` beside it. Both are the same
   transcription, but current yt-dlp lists `en` first, and YouTube serves it

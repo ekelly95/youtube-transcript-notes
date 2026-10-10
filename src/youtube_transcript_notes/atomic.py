@@ -74,8 +74,12 @@ def _claim(path: Path) -> None:
 
 
 def _write_durably(path: Path, text: str) -> None:
-    """Write ``text`` and force it to the disk before the file has a real name."""
-    with path.open("w", encoding="utf-8") as handle:
+    """Write ``text`` and force it to the disk before the file has a real name.
+
+    Newlines are written as ``\n`` on every platform, so a notes folder
+    synced between Windows and anything else does not churn on re-render.
+    """
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())

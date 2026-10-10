@@ -217,16 +217,23 @@ def _corrections(corrections: Sequence[Correction]) -> list[str]:
         "with what each rests on."
     )
     lines.append("")
-    lines.append("| Transcribed | Probably | Times | Confidence | From |")
+    lines.append("| Transcribed | Probably | Times | Match | From |")
     lines.append("|---|---|---|---|---|")
     for correction in corrections:
         lines.append(
             f"| {label(correction.wrong)} | {label(correction.right)} "
-            f"| {correction.occurrences} | {correction.confidence:.2f} "
+            f"| {correction.occurrences} | {_match(correction.distance)} "
             f"| {label(correction.evidence)} |"
         )
     lines.append("")
     return lines
+
+
+def _match(distance: int | None) -> str:
+    """How a correction was found: named outright, or so many edits away."""
+    if distance is None:
+        return "named"
+    return f"{distance} edit{'' if distance == 1 else 's'}"
 
 
 def _who(passage: Passage, named: Callable[[str], str]) -> str:

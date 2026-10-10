@@ -868,6 +868,21 @@ class TestWritingFiles:
 
         assert capsys.readouterr().out.startswith("unchanged ")
 
+    def test_a_note_written_with_crlf_by_an_older_version_is_unchanged(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """Notes are now written LF. One an older version wrote CRLF on Windows
+        says the same thing, so it is neither refused nor rewritten."""
+        main([SOURCE, "--out", str(tmp_path)])
+        capsys.readouterr()
+        (note,) = tmp_path.iterdir()
+        assert b"\r\n" not in note.read_bytes()
+        note.write_bytes(note.read_bytes().replace(b"\n", b"\r\n"))
+
+        main([SOURCE, "--out", str(tmp_path)])
+
+        assert capsys.readouterr().out.startswith("unchanged ")
+
     def test_a_pre_existing_note_at_the_same_name_is_refused(
         self, tmp_path: Path, capsys
     ) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -357,7 +358,7 @@ class TestCitation:
             "MIT OpenCourseWare. (2011, September 12). "
             f"Lecture 4: Dynamic Programming [Video]. YouTube. {FULL_URL}\n"
             "\n"
-            "Transcript retrieved 6 August 2026 from human-written captions "
+            "Transcript retrieved 6 August 2026 (UTC) from human-written captions "
             "(en, json3). Content hash: aaaaaaaaaaaa."
         )
 
@@ -369,7 +370,7 @@ class TestCitation:
         expected = (
             "(n.d.). week-03-lecture [Video].\n"
             "\n"
-            "Transcript retrieved 6 August 2026 from platform auto-generated "
+            "Transcript retrieved 6 August 2026 (UTC) from platform auto-generated "
             "captions (en, vtt). Content hash: bbbbbbbbbbbb."
         )
 
@@ -381,6 +382,28 @@ class TestCitation:
         # The point of the note: a reader must not mistake ASR output for
         # something a person wrote down.
         assert "auto-generated" in get_renderer("citation").render(minimal_lecture)
+
+    @pytest.mark.parametrize(
+        ("retrieved", "day"),
+        [
+            # Late evening in New York is already the next day in UTC.
+            (datetime(2026, 8, 6, 23, 30, tzinfo=timezone(timedelta(hours=-4))), 7),
+            # A naive stamp, as an old JSONL line may hold, is taken as UTC.
+            (datetime(2026, 8, 6, 23, 30), 6),
+        ],
+    )
+    def test_the_retrieval_date_is_the_utc_date(
+        self, minimal_lecture: Lecture, retrieved: datetime, day: int
+    ) -> None:
+        """The note says "(UTC)", so the date beside it must be one."""
+        lecture = replace(
+            minimal_lecture,
+            provenance=replace(minimal_lecture.provenance, retrieved_at=retrieved),
+        )
+
+        output = get_renderer("citation").render(lecture)
+
+        assert f"Transcript retrieved {day} August 2026 (UTC)" in output
 
     def test_a_hostile_url_is_left_out_of_the_reference(
         self, hostile_lecture: Lecture
@@ -577,6 +600,29 @@ class TestCorrectionsInline:
         assert "quad code [Claude Code]\n\\--- then continue" in output
 
 
+class TestCorrectionsTableSaysHowEachWasFound:
+    @pytest.mark.parametrize(
+        ("distance", "shown"), [(None, "named"), (1, "1 edit"), (2, "2 edits")]
+    )
+    def test_a_measurement_not_a_made_up_probability(
+        self, minimal_lecture: Lecture, distance: int | None, shown: str
+    ) -> None:
+        """The column once read "Confidence 0.90" — one minus a tenth of the
+        edit distance, a number nothing had measured."""
+        lecture = replace(
+            minimal_lecture,
+            corrections=(
+                Correction(wrong="Karpathi", right="Karpathy", distance=distance),
+            ),
+        )
+
+        output = get_renderer("markdown").render(lecture)
+
+        assert "| Transcribed | Probably | Times | Match | From |" in output
+        assert f"| 1 | {shown} |" in output
+        assert "Confidence" not in output
+
+
 class TestCorrectionsTableSurvivesItsOwnContent:
     def test_a_pipe_in_a_correction_stays_in_its_cell(
         self, minimal_lecture: Lecture
@@ -592,6 +638,6 @@ class TestCorrectionsTableSurvivesItsOwnContent:
         output = get_renderer("markdown").render(lecture)
         (row,) = [line for line in output.splitlines() if line.startswith("| a")]
 
-        assert row == r"| a\|b | c\|d | 1 | 1.00 | e\|f |"
+        assert row == r"| a\|b | c\|d | 1 | named | e\|f |"
         cells = re.split(r"(?<!\\)\|", row)[1:-1]
         assert len(cells) == 5

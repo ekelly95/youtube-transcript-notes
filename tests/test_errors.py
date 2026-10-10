@@ -119,7 +119,7 @@ class TestSeveralLectures:
 
         assert "week-03" in message
         assert "week-04" in message
-        assert "holds 2 lectures" in message
+        assert "holds captions for 2 videos" in message
 
     def test_a_long_listing_is_capped_and_says_so(self) -> None:
         """Contract 5 applies to an error message holding three hundred
@@ -146,14 +146,14 @@ class TestConfigErrors:
 class TestErrorTextTellsTheTruth:
     def test_the_corrections_remedy_promises_only_fields_that_are_read(self) -> None:
         """`read_corrections` reads wrong, right and evidence; `at` and
-        `confidence` are computed. Advice naming fields that vanish without
+        `distance` are computed. Advice naming fields that vanish without
         comment is worse than no advice, in a project that calls error text
         documentation people actually read."""
         remedy = " ".join(MalformedCorrections.TRY)
 
         assert '"evidence"' in remedy
         assert '"at"' not in remedy
-        assert '"confidence"' not in remedy
+        assert '"distance"' not in remedy
 
 
 class TestTheTaxonomyIsImportable:

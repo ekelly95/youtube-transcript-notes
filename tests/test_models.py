@@ -78,7 +78,7 @@ class TestRoundTrip:
             wrong="quad code",
             right="Claude Code",
             at=124.5,
-            confidence=0.9,
+            distance=2,
             evidence="title",
             occurrences=23,
         )
@@ -89,6 +89,13 @@ class TestRoundTrip:
 
         assert Correction.from_dict(correction.to_dict()) == correction
         assert Correction.from_dict({"wrong": "a", "right": "b"}) == correction
+
+    def test_a_line_written_before_distance_still_reads(self) -> None:
+        """Older JSONL carries an invented `confidence`. It is dropped rather
+        than refused: the correction itself is still good."""
+        old = {"wrong": "a", "right": "b", "confidence": 0.9}
+
+        assert Correction.from_dict(old) == Correction(wrong="a", right="b")
 
     def test_seeing_a_correction_again_only_counts_it(self) -> None:
         once = Correction(wrong="a", right="b", at=4.0)

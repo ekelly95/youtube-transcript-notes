@@ -77,6 +77,15 @@ class TestAtomicWrite:
         assert target.read_text(encoding="utf-8") == "second"
         assert [p.name for p in tmp_path.iterdir()] == ["notes.md"]
 
+    def test_newlines_are_lf_on_every_platform(self, tmp_path: Path) -> None:
+        """Text mode would write CRLF on Windows, so a notes folder synced
+        between machines changed on every re-render. Checked as bytes: reading
+        text back would hide the difference."""
+        target = tmp_path / "notes.md"
+        atomic_write(target, "first\nsecond\n")
+
+        assert target.read_bytes() == b"first\nsecond\n"
+
     def test_unicode_survives_the_round_trip(self, tmp_path: Path) -> None:
         target = tmp_path / "notes.md"
         atomic_write(target, "café — 数学 — naïve")

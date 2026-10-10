@@ -286,7 +286,11 @@ class Correction:
     wrong: str
     right: str
     at: float | None = None
-    confidence: float = 1.0
+    distance: int | None = None
+    """Edits between `wrong` and `right` for a near-miss the tool spotted;
+    None when the wrong form was named outright, by a glossary or a
+    corrections file. A measurement, not a probability: nothing here knows how
+    likely a correction is to be right."""
     evidence: str = ""
     occurrences: int = 1
 
@@ -299,7 +303,7 @@ class Correction:
             "wrong": self.wrong,
             "right": self.right,
             "at": self.at,
-            "confidence": self.confidence,
+            "distance": self.distance,
             "evidence": self.evidence,
             "occurrences": self.occurrences,
         }
@@ -310,7 +314,8 @@ class Correction:
             wrong=data["wrong"],
             right=data["right"],
             at=data.get("at"),
-            confidence=data.get("confidence", 1.0),
+            # A pre-0.5 line carries an invented "confidence"; it is ignored.
+            distance=data.get("distance"),
             evidence=data.get("evidence", ""),
             occurrences=data.get("occurrences", 1),
         )
