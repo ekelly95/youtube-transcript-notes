@@ -193,6 +193,16 @@ class TestSelection:
         assert "PROFESSOR" in default  # speaker labels are human-written only
         assert "PROFESSOR" not in auto
 
+    def test_an_unmarked_file_is_selected_only_as_unmarked(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "lec.en.vtt").write_text(
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhello\n", encoding="utf-8"
+        )
+
+        assert "hello" in run([str(tmp_path), "--tiers", "unmarked"]).text
+        assert run([str(tmp_path), "--tiers", "manual"]).exit_code == EXIT_FAILED
+
     def test_an_impossible_selection_reports_what_was_available(self) -> None:
         result = run([SOURCE, "--languages", "ja"])
 

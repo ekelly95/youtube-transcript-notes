@@ -551,8 +551,9 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         choices=[tier.value for tier in TrustTier],
         help=(
             "Restrict and reorder acceptable transcript sources. The default "
-            "prefers human-written captions, then automatic ones, then "
-            "machine translations."
+            "order is manual (human-written), unmarked (a local file that "
+            "does not say), asr_platform (automatic), asr_local (transcribed "
+            "by a separate tool), then translated."
         ),
     )
     parser.add_argument(
