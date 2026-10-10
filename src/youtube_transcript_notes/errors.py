@@ -338,7 +338,7 @@ class TransportNotInstalled(SourceError):
         (
             "If you installed this with pipx, the tool has its own environment "
             "and pip will not reach it: "
-            "pipx inject youtube-transcript-notes yt-dlp"
+            'pipx inject youtube-transcript-notes "yt-dlp[default]"'
         ),
     )
 
