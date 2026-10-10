@@ -7,8 +7,10 @@ downloads no captions.
 
 **Trust tiers.** A video offers a few human-written tracks and often over a
 hundred automatic ones, nearly all machine translations of the automatic
-transcript. Automatic captions in the video's declared language are
-`ASR_PLATFORM`; the rest are `TRANSLATED`.
+transcript. yt-dlp marks the transcription itself ``-orig``; automatic tracks
+in its language are `ASR_PLATFORM`, and the rest `TRANSLATED`. Only a video
+with no ``-orig`` track falls back on the uploader's declared language, which
+can be wrong.
 """
 
 from __future__ import annotations
@@ -106,6 +108,18 @@ _JS_RUNTIME_HINT = (
     "YouTube support. Install Deno "
     "(https://docs.deno.com/runtime/getting_started/installation/) or Node.js "
     "20 or newer, then retry."
+)
+
+#: Failures meaning the source could not be *reached*, after which a cached
+#: answer is still the best one. Anything else is a fact the live source
+#: reported — the video is gone, private, restricted — and must not be papered
+#: over with last week's manifest.
+_TRANSPORT_FAILURES: tuple[type[SourceError], ...] = (
+    AcquisitionFailed,
+    BotCheck,
+    RateLimited,
+    TransportContractChanged,
+    TransportNotInstalled,
 )
 
 #: Where caption tracks are read from. Absent means the contract moved;
@@ -222,7 +236,7 @@ class YouTubeProvider(SourceProvider):
         playlist_id = _playlist_id(source)
         try:
             ids = _require_playlist_ids(self._extract_flat(source), source)
-        except SourceError as error:
+        except _TRANSPORT_FAILURES as error:
             remembered = self._recall_expansion(source, playlist_id, error)
             if remembered is None:
                 raise
@@ -252,10 +266,10 @@ class YouTubeProvider(SourceProvider):
             tracks = tuple(self._tracks_from(info, meta))
             if not tracks:
                 _explain_empty_manifest(info, meta.source_id)
-        except SourceError as error:
-            # A `SourceError` means the source could not be reached or read, so
-            # the cached manifest is the best answer. A `CaptionError` means it
-            # was reached and has nothing usable — that must not be overridden.
+        except _TRANSPORT_FAILURES as error:
+            # Unreachable, so the cached manifest is the best answer. A video
+            # reported gone or restricted, or a `CaptionError` (reached, and
+            # nothing usable), is a live answer that must not be overridden.
             remembered = self._recall(source, error)
             if remembered is None:
                 raise
@@ -384,14 +398,13 @@ class YouTubeProvider(SourceProvider):
         )
 
     def _tracks_from(self, info: Info, meta: LectureMeta) -> Iterator[TrackHandle]:
-        spoken = (info.get("language") or UNKNOWN_LANGUAGE).lower()
-
-        groups: list[tuple[Info, str | None]] = [
+        automatic: Info = info.get("automatic_captions") or {}
+        groups: list[tuple[Info, frozenset[str] | None]] = [
             (info.get("subtitles") or {}, None),
-            (info.get("automatic_captions") or {}, spoken),
+            (automatic, _spoken_languages(info, automatic)),
         ]
 
-        for captions, spoken_language in groups:
+        for captions, spoken in groups:
             # Originals first, so they win ties in `find`: a plain `en` beside
             # `en-orig` is served through YouTube's translation endpoint
             # (`tlang`), which is rate-limited far sooner than the original.
@@ -399,7 +412,7 @@ class YouTubeProvider(SourceProvider):
                 captions.items(), key=lambda item: not _is_original(item[0])
             )
             for raw_language, entries in ordered:
-                tier = _tier_for(raw_language, spoken_language)
+                tier = _tier_for(raw_language, spoken)
                 for entry in entries or ():
                     # Skipped, not trusted; `_explain_empty_manifest` reports
                     # it if nothing usable is left.
@@ -583,22 +596,37 @@ def _is_original(raw_language: str) -> bool:
     return raw_language.lower().endswith(_ORIGINAL_SUFFIX)
 
 
-def _tier_for(raw_language: str, spoken_language: str | None) -> TrustTier:
+def _spoken_languages(info: Info, automatic: Info) -> frozenset[str]:
+    """Which languages the automatic transcription is in, as primary subtags.
+
+    The ``-orig`` tracks say so directly. Only without one is the uploader's
+    declared ``language`` used: it is a form field, and when it is wrong it
+    would file a translation as the transcription and the transcription's
+    plain twin as a translation.
+    """
+    originals = frozenset(
+        primary_subtag(language) for language in automatic if _is_original(language)
+    )
+    if originals:
+        return originals
+
+    declared = info.get("language")
+    if not isinstance(declared, str) or not declared:
+        declared = UNKNOWN_LANGUAGE
+    return frozenset({primary_subtag(declared)})
+
+
+def _tier_for(raw_language: str, spoken: frozenset[str] | None) -> TrustTier:
     """Classify one caption track.
 
-    `spoken_language` is None for human-written tracks. For automatic ones it
-    is the video's declared language; anything else is a translation.
+    `spoken` is None for human-written tracks. For automatic ones it holds the
+    languages the transcription is in; anything else is a translation.
     """
-    if spoken_language is None:
+    if spoken is None:
         return TrustTier.MANUAL
 
     language = raw_language.lower()
-    if _is_original(language):
-        # yt-dlp's marker for the original transcription — trusted even when
-        # the video declares no language to compare against.
-        return TrustTier.ASR_PLATFORM
-
-    if primary_subtag(language) == primary_subtag(spoken_language):
+    if _is_original(language) or primary_subtag(language) in spoken:
         return TrustTier.ASR_PLATFORM
     return TrustTier.TRANSLATED
 
@@ -865,7 +893,7 @@ def _youtube_dl(flat: bool = False) -> Any:
     """A configured `YoutubeDL`, typed `Any` because yt-dlp ships no types."""
     try:
         from yt_dlp import YoutubeDL
-    except ImportError as error:  # pragma: no cover - depends on install extras
+    except ImportError as error:
         raise TransportNotInstalled(source="youtube") from error
 
     options: dict[str, Any] = {

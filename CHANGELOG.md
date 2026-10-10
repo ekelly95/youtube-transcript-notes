@@ -15,6 +15,18 @@ changes.
   transcription, but current yt-dlp lists `en` first, and YouTube serves it
   through its translation endpoint, which answered HTTP 429 long before the
   original did.
+- When a video has an `-orig` track, only automatic tracks in that language
+  are `asr_platform`. The uploader's declared language decides only when there
+  is no `-orig` track, so a wrong declaration can no longer file a machine
+  translation as the transcription.
+- A cached manifest or playlist is used only when YouTube could not be
+  reached. A video it reports unavailable, age-restricted or region-blocked
+  now fails as such, instead of being served from cache under a notice saying
+  the source could not be reached.
+- The pipx remedy for a missing yt-dlp now installs `"yt-dlp[default]"`, the
+  extra that carries YouTube's challenge solver.
+- A non-text `language` field from yt-dlp is ignored rather than failing the
+  listing with advice to retry.
 
 ## 0.4.0
 

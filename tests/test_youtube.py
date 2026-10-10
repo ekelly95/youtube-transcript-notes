@@ -32,6 +32,7 @@ from youtube_transcript_notes.errors import (
     SourceError,
     TrackNotFound,
     TransportContractChanged,
+    TransportNotInstalled,
 )
 from youtube_transcript_notes.limits import MAX_PAYLOAD_BYTES, MAX_PLAYLIST_ITEMS
 from youtube_transcript_notes.models import TrustTier
@@ -190,6 +191,76 @@ class TestTrustTiers:
         manifest = YouTubeProvider(extractor=lambda url: no_manual).list(WATCH_URL)
 
         assert manifest.find(["en"]).track.raw_language == "en-orig"
+
+    def test_a_wrong_declared_language_does_not_outrank_the_original(
+        self, info: dict
+    ) -> None:
+        """`language` is the uploader's form field; `-orig` is what yt-dlp
+        read off the transcription itself. When they disagree the marker wins:
+        trusting the field would file the French machine translation as the
+        transcription, and the transcription's plain twin as a translation."""
+        mislabelled = {**info, "language": "fr"}
+        tracks = [
+            h.track
+            for h in YouTubeProvider(extractor=lambda url: mislabelled).list(WATCH_URL)
+        ]
+        asr = {t.raw_language for t in tracks if t.tier is TrustTier.ASR_PLATFORM}
+        tier = {
+            t.raw_language: t.tier for t in tracks if t.tier is not TrustTier.MANUAL
+        }
+
+        assert asr == {"en", "en-orig"}
+        assert tier["fr"] is TrustTier.TRANSLATED
+        assert tier["de"] is TrustTier.TRANSLATED
+
+    def test_without_an_original_the_declared_language_decides(
+        self, info: dict
+    ) -> None:
+        automatic = {
+            language: tracks
+            for language, tracks in info["automatic_captions"].items()
+            if not language.endswith("-orig")
+        }
+        declared_french = {**info, "language": "fr", "automatic_captions": automatic}
+        tracks = [
+            h.track
+            for h in YouTubeProvider(extractor=lambda url: declared_french).list(
+                WATCH_URL
+            )
+        ]
+        asr = {t.raw_language for t in tracks if t.tier is TrustTier.ASR_PLATFORM}
+
+        assert asr == {"fr"}
+
+    def test_with_neither_an_original_nor_a_language_nothing_is_presumed(
+        self, info: dict
+    ) -> None:
+        """No evidence which track is the transcription, so none is promoted."""
+        automatic = {
+            language: tracks
+            for language, tracks in info["automatic_captions"].items()
+            if not language.endswith("-orig")
+        }
+        bare = {**info, "language": 42, "automatic_captions": automatic}
+        tracks = [
+            h.track for h in YouTubeProvider(extractor=lambda url: bare).list(WATCH_URL)
+        ]
+
+        assert not any(t.tier is TrustTier.ASR_PLATFORM for t in tracks)
+
+    @pytest.mark.parametrize("language", [42, ["en"], {"code": "en"}, ""])
+    def test_a_declared_language_that_is_not_text_is_ignored(
+        self, info: dict, language: object
+    ) -> None:
+        """A third party controls the shape. A number here once surfaced as an
+        `AttributeError`, reported with advice to retry."""
+        odd = {**info, "language": language}
+        tracks = [
+            h.track for h in YouTubeProvider(extractor=lambda url: odd).list(WATCH_URL)
+        ]
+        asr = {t.raw_language for t in tracks if t.tier is TrustTier.ASR_PLATFORM}
+
+        assert asr == {"en", "en-orig"}
 
 
 class TestTrackSelection:
@@ -976,6 +1047,21 @@ class FakeResponse:
     def close(self) -> None:
         self.closed = True
 
+    @pytest.mark.parametrize("reported", [LectureUnavailable, AgeRestricted])
+    def test_a_live_answer_about_the_playlist_is_not_overridden(
+        self, tmp_path: Path, reported: type[SourceError]
+    ) -> None:
+        """Only an unreachable source falls back. A playlist the live source
+        says is gone stays gone, whatever last week's roster said."""
+        cache = Cache(tmp_path)
+        self._warm(cache)
+
+        def says_so(url: str) -> dict:
+            raise reported(source=url)
+
+        with pytest.raises(reported):
+            YouTubeProvider(flat_extractor=says_so, cache=cache).expand(PLAYLIST_URL)
+
 
 class TestFailureClassification:
     @pytest.mark.parametrize(
@@ -1386,6 +1472,27 @@ class TestTransportIsBounded:
         assert params["retries"] >= 1
         assert params["extractor_retries"] >= 1
 
+    def test_a_missing_transport_is_named_with_the_remedy_that_works(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The first failure a fresh install meets. Both remedies must bring
+        the `default` extra: without it there is no challenge solver, and
+        YouTube extraction fails one step later with a far worse message."""
+        import sys
+
+        from youtube_transcript_notes.sources.youtube import _youtube_dl
+
+        monkeypatch.setitem(sys.modules, "yt_dlp", None)
+
+        with pytest.raises(TransportNotInstalled) as caught:
+            _youtube_dl()
+
+        remedies = caught.value.remedy["try"]
+        assert any("[youtube]" in remedy for remedy in remedies)
+        pipx = [remedy for remedy in remedies if "pipx" in remedy]
+        assert pipx
+        assert all("yt-dlp[default]" in remedy for remedy in pipx)
+
 
 class TestJavaScriptRuntime:
     """yt-dlp needs a JS runtime for YouTube since 2025.11.12, and only enables
@@ -1492,6 +1599,39 @@ class TestSurvivingAnOutage:
 
         assert isinstance(manifest.stale_reason, AcquisitionFailed)
         assert "the transport is down" in manifest.stale_reason.cause
+
+    @pytest.mark.parametrize("failure", [BotCheck, RateLimited, TransportNotInstalled])
+    def test_every_way_of_not_reaching_the_source_falls_back(
+        self, info: dict, tmp_path: Path, failure: type[SourceError]
+    ) -> None:
+        cache = Cache(tmp_path)
+        YouTubeProvider(extractor=lambda url: info, cache=cache).list(WATCH_URL)
+
+        def unreachable(url: str) -> dict:
+            raise failure(source=url)
+
+        manifest = YouTubeProvider(extractor=unreachable, cache=cache).list(WATCH_URL)
+
+        assert isinstance(manifest.stale_reason, failure)
+
+    @pytest.mark.parametrize(
+        "reported", [LectureUnavailable, AgeRestricted, RegionBlocked]
+    )
+    def test_a_live_answer_about_the_video_is_not_overridden(
+        self, info: dict, tmp_path: Path, reported: type[SourceError]
+    ) -> None:
+        """The source was reached and said the video is gone or barred. A
+        cached manifest would serve it anyway under a notice claiming the
+        source could not be reached — which would be false. AGENT_GUIDE:
+        cached discovery only after transport failure."""
+        cache = Cache(tmp_path)
+        YouTubeProvider(extractor=lambda url: info, cache=cache).list(WATCH_URL)
+
+        def says_so(url: str) -> dict:
+            raise reported(source=url)
+
+        with pytest.raises(reported):
+            YouTubeProvider(extractor=says_so, cache=cache).list(WATCH_URL)
 
     def test_a_live_manifest_is_not_marked_stale(
         self, provider: YouTubeProvider
