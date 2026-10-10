@@ -20,6 +20,7 @@ cased, word-timed automatic track that YouTube produces now.
 
 from __future__ import annotations
 
+from collections import Counter
 from itertools import pairwise
 
 import pytest
@@ -31,8 +32,9 @@ from youtube_transcript_notes.models import (
     LectureMeta,
     Provenance,
     TrustTier,
+    Word,
 )
-from youtube_transcript_notes.parse import parse_json3
+from youtube_transcript_notes.parse import parse_json3, parse_vtt
 from youtube_transcript_notes.refine import (
     build_sections,
     ends_sentence,
@@ -44,6 +46,10 @@ from youtube_transcript_notes.render import get_renderer
 #: p95 of paragraph length, in seconds. The target is forty; this is the band
 #: around it that says the target is being hit rather than merely aimed at.
 LONGEST_USEFUL_PARAGRAPH = 60.0
+
+#: Paragraphs in the 2011 automatic vtt once deduplicated. Pinned: the stamps
+#: are only all checked if they are all there.
+OLD_AUTO_VTT_PASSAGES = 61
 
 
 def lecture_from(payload: str, tier: TrustTier) -> Lecture:
@@ -110,7 +116,7 @@ class TestAStampPointsAtTheStartOfAThought:
         anything the pipeline derived, so a bug that moved both the text and
         the anchor together still fails.
         """
-        when = {}
+        when: dict[str, list[float]] = {}
         for cue in synthetic_cues:
             for word in cue.words:
                 when.setdefault(word.text.strip(), []).append(word.start)
@@ -118,13 +124,18 @@ class TestAStampPointsAtTheStartOfAThought:
         passages = reflow(
             synthetic_cues, policy_for(TrustTier.ASR_PLATFORM, "json3", synthetic_cues)
         )
+        # Not any time the word was said: the time *this* instance was. A
+        # paragraph opening on the third "So" is stamped with the third "So".
+        seen: Counter[str] = Counter()
         for passage in passages:
-            opening = passage.text.split()[0]
-            if opening in ("—", "(inaudible)"):  # markup, not a spoken word
-                continue
-            assert any(
-                abs(start - passage.start) < 0.001 for start in when.get(opening, [])
-            ), f"{passage.start} does not name the moment {opening!r} was said"
+            words = passage.text.split()
+            opening = words[0]
+            if opening not in ("—", "(inaudible)"):  # markup, not a spoken word
+                said = when[opening][seen[opening]]
+                assert abs(said - passage.start) < 0.001, (
+                    f"{passage.start} does not name the moment {opening!r} was said"
+                )
+            seen.update(words)
 
     def test_the_anchor_is_still_the_start_of_a_real_cue(
         self, synthetic_cues: list[Cue]
@@ -144,22 +155,68 @@ class TestAStampPointsAtTheStartOfAThought:
         assert all(passage.start in moments for passage in passages)
 
 
+class TestBothEncodingsStampTheSameMoment:
+    """The same speech encoded twice — json3 with a timed word per segment,
+    vtt by rolling repetition — must not only say the same words but put each
+    paragraph at the same second. A link that lands three seconds off in one
+    format is a citation nobody can check."""
+
+    def test_every_vtt_stamp_is_the_json3_time_of_its_opening_word(
+        self, old_auto_cues: list[Cue]
+    ) -> None:
+        vtt = parse_vtt(load_caption("mit6006-lec1.auto.en.vtt"))
+        passages = reflow(vtt, policy_for(TrustTier.ASR_PLATFORM, "vtt", vtt))
+
+        # json3 times each segment, and a segment can hold "a problem": each
+        # word in it is said from that moment.
+        timed = [
+            (token, word.start)
+            for cue in old_auto_cues
+            for word in cue.words or (Word(cue.text, cue.start),)
+            for token in word.text.split()
+        ]
+        assert [token for token, _ in timed] == " ".join(
+            passage.text for passage in passages
+        ).split()
+
+        position = 0
+        for passage in passages:
+            token, said = timed[position]
+            assert abs(passage.start - said) < 0.005, (
+                f"vtt stamps {token!r} at {passage.start}, json3 at {said}"
+            )
+            position += len(passage.text.split())
+
+        assert len(passages) == OLD_AUTO_VTT_PASSAGES
+
+
 class TestAParagraphIsShortEnoughToCheck:
     """T3 — a citation nobody can verify by ear is not a citation."""
 
     @pytest.mark.parametrize(
-        ("fixture", "tier"),
-        [("synthetic_cues", TrustTier.ASR_PLATFORM), ("manual_cues", TrustTier.MANUAL)],
+        ("fixture", "tier", "count"),
+        [
+            ("synthetic_cues", TrustTier.ASR_PLATFORM, 4),
+            ("manual_cues", TrustTier.MANUAL, 92),
+        ],
     )
     def test_paragraphs_stay_near_the_target(
-        self, fixture: str, tier: TrustTier, request: pytest.FixtureRequest
+        self,
+        fixture: str,
+        tier: TrustTier,
+        count: int,
+        request: pytest.FixtureRequest,
     ) -> None:
+        """The band is a target, so it stays a band; the count beside it is
+        pinned, because a paragraphing change that merged or split half the
+        paragraphs could still land inside the band."""
         cues = request.getfixturevalue(fixture)
         passages = reflow(cues, policy_for(tier, "json3", cues))
 
         lengths = sorted(passage.end - passage.start for passage in passages)
         p95 = lengths[int(len(lengths) * 0.95)]
 
+        assert len(passages) == count
         assert p95 <= LONGEST_USEFUL_PARAGRAPH
 
     def test_a_pause_mid_sentence_does_not_start_a_paragraph(

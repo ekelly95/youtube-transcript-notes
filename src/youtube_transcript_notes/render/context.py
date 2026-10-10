@@ -59,8 +59,10 @@ class ContextRenderer(Renderer):
         return "\n\n".join(part for part in parts if part)
 
 
-def _tokens(text: str) -> int:
-    return int(len(text.split()) / _WORDS_PER_TOKEN)
+def _tokens(text: str) -> float:
+    """The estimate, unrounded: rounding each part down let the parts sum to
+    less than the whole, and the output past its budget."""
+    return len(text.split()) / _WORDS_PER_TOKEN
 
 
 def _header(lecture: Lecture) -> str:
@@ -103,7 +105,7 @@ def _section_line(section: Section) -> str:
     )
 
 
-def _fill(lecture: Lecture, budget: int) -> tuple[str, list[tuple[float, float]]]:
+def _fill(lecture: Lecture, budget: float) -> tuple[str, list[tuple[float, float]]]:
     """Emit passages until the budget runs out, tracking what did not fit.
 
     Headings appear only when a passage beneath them is admitted. The section

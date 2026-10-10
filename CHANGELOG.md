@@ -38,6 +38,16 @@ changes.
 - Tests check that every command in a skill parses with the real CLI parser
   and that any glossary it names exists.
 
+**Tests**
+
+- The 2011 automatic track's vtt and json3 encodings now have to agree on
+  every paragraph stamp, not only on the words: each of the 61 vtt stamps is
+  the json3 time of its opening word.
+- Stamp checks match the instance of the opening word, not any time the word
+  was said. The context budget test checks the output fits and that the next
+  passage would not, instead of a loose upper bound. Paragraph counts are pinned
+  beside the p95 length band.
+
 **Fixes**
 
 - Notes and cache entries are written with LF line endings on every platform,
@@ -50,6 +60,9 @@ changes.
   attributed everything after it to them.
 - Error messages and the context preamble say "video" rather than "lecture".
   Error codes and class names are unchanged.
+- `--format context` keeps to its budget exactly by its own estimate.
+  Rounding each part down let the parts add up to less than the whole, so the
+  output could run a few tokens over.
 - The context header leaves out the duration of a video under a minute instead
   of saying "0 min", and the citation note marks its retrieval date as UTC.
 - A video with only automatic captions is fetched from its original track
