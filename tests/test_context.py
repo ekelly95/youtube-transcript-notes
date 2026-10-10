@@ -6,9 +6,9 @@ import pytest
 
 from conftest import CAPTIONS, without_frontmatter
 from youtube_transcript_notes import TranscriptFetcher
-from youtube_transcript_notes.models import Lecture
+from youtube_transcript_notes.models import Lecture, format_timestamp
 from youtube_transcript_notes.render import get_renderer
-from youtube_transcript_notes.render.context import ContextRenderer
+from youtube_transcript_notes.render.context import ContextRenderer, _tokens
 
 
 @pytest.fixture(scope="module")
@@ -30,13 +30,25 @@ class TestBudget:
         assert "did not fit in the context budget" in output
         assert "lecture.between(" in output
 
-    def test_truncation_roughly_respects_the_budget(self, lecture: Lecture) -> None:
-        output = ContextRenderer(budget=1000).render(lecture)
-        estimated = len(output.split()) / 0.75
+    @pytest.mark.parametrize("budget", [300, 1000, 2500, 5000])
+    def test_what_is_kept_fits_and_the_next_passage_would_not(
+        self, lecture: Lecture, budget: int
+    ) -> None:
+        """Exact, by the renderer's own estimate, rather than a fence around
+        it. Both halves matter: under budget, and not needlessly short.
 
-        # The estimate is deliberately rough; the point is that a 7000-word
-        # lecture does not arrive whole when 1000 tokens were asked for.
-        assert estimated < 2000
+        The estimate is rough as a count of a model's tokens; that is a
+        separate matter from whether the renderer keeps to it.
+        """
+        output = ContextRenderer(budget=budget).render(lecture)
+        kept, omitted = output.split("\n\n## Omitted\n")
+        left_out = lecture.passages[-int(omitted.split()[0])]
+        # As the renderer writes it, less any speaker name or heading in front:
+        # leaving those out can only make the check harder to pass.
+        entry = f"[{format_timestamp(left_out.start)}] {left_out.text}"
+
+        assert _tokens(kept) <= budget
+        assert _tokens(kept) + _tokens(entry) > budget
 
     def test_structure_survives_even_a_tiny_budget(self, lecture: Lecture) -> None:
         # Metadata and outline are what let a reader decide what to ask for
