@@ -12,7 +12,10 @@ following a procedure Claude sessions can no longer see.
 
 from __future__ import annotations
 
+import re
+import shlex
 import socket
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -122,3 +125,66 @@ def test_the_agent_instructions_match_their_codex_twin() -> None:
     mirror = _REPO / "AGENTS.md"
     assert mirror.exists(), _fix(original, mirror)
     assert mirror.read_bytes() == original.read_bytes(), _fix(original, mirror)
+
+
+#: What a skill's placeholders stand for when its commands are checked.
+_PLACEHOLDERS = {
+    "<source>": "HtSuA80QTyo",
+    "<file>": "corrections.json",
+    "<domain>": "agent-engineering",
+}
+
+_FENCE = re.compile(r"^[ \t]*```(\w+)\n(.*?)^[ \t]*```", re.MULTILINE | re.DOTALL)
+
+
+def _fences(language: str) -> list[tuple[str, str]]:
+    """Every ``language`` code block in every skill, with the skill it is in."""
+    return [
+        (path.relative_to(_REPO).as_posix(), match.group(2))
+        for path in sorted(_SKILLS.rglob("SKILL.md"))
+        for match in _FENCE.finditer(path.read_text(encoding="utf-8"))
+        if match.group(1) == language
+    ]
+
+
+def _commands() -> list[tuple[str, list[str]]]:
+    """This tool's command lines from the skills, as argv after the module."""
+    found = []
+    for skill, block in _fences("bash"):
+        for line in block.replace("\\\n", " ").splitlines():
+            words = shlex.split(line)
+            if "youtube_transcript_notes" not in words:
+                continue
+            argv = words[words.index("youtube_transcript_notes") + 1 :]
+            for placeholder, value in _PLACEHOLDERS.items():
+                argv = [word.replace(placeholder, value) for word in argv]
+            found.append((skill, argv))
+    return found
+
+
+def test_the_skills_name_commands() -> None:
+    assert _commands(), "no youtube_transcript_notes command found in any skill"
+
+
+@pytest.mark.parametrize(("skill", "argv"), _commands())
+def test_every_command_in_a_skill_parses(skill: str, argv: list[str]) -> None:
+    """A renamed flag leaves a skill telling agents to run a command that
+    exits 2. Nothing else would notice: the skill is prose to every test."""
+    from youtube_transcript_notes.cli import _parse
+
+    try:
+        _parse(argv)
+    except SystemExit as exit:
+        pytest.fail(f"{skill}: {' '.join(argv)} does not parse ({exit.code})")
+
+
+@pytest.mark.parametrize(("skill", "argv"), _commands())
+def test_every_glossary_a_skill_names_exists(skill: str, argv: list[str]) -> None:
+    for flag, value in pairwise(argv):
+        if flag == "--glossary":
+            assert (_REPO / value).is_file(), f"{skill} names missing {value}"
+
+
+@pytest.mark.parametrize(("skill", "code"), _fences("python"))
+def test_every_python_example_in_a_skill_compiles(skill: str, code: str) -> None:
+    compile(code, skill, "exec")

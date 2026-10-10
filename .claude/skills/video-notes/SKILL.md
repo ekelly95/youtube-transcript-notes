@@ -22,7 +22,11 @@ as `unmarked`.
    .venv/Scripts/python -m youtube_transcript_notes <source> --list
    ```
 
-2. Choose the most trustworthy suitable track:
+2. Note which track the tool will use. It chooses for you: the most trusted
+   tier in the requested languages, then the richest format. The rendered
+   note's frontmatter (`tier`, `language`) and byline record the choice. Pass
+   `--tiers` or `--languages` only to override it. Treat the chosen track by
+   its tier:
 
    | Tier | Treatment |
    |---|---|
@@ -32,12 +36,21 @@ as `unmarked`.
    | `asr_local` | State that quality depends on the separate transcription tool |
    | `translated` | Use for gist only; do not quote |
 
-3. Render with the standing glossary:
+   A `manual` track in a language other than the one spoken in the video is a
+   translation, whoever wrote it: treat it as `translated`.
+
+3. Render, with a domain glossary when one fits:
 
    ```bash
    .venv/Scripts/python -m youtube_transcript_notes <source> \
-     --glossary names.txt --out notes/
+     --glossary glossaries/<domain>.txt --out notes/
    ```
+
+   `glossaries/` holds one file per field, such as `agent-engineering.txt`
+   for talks on AI coding agents. Pass one only when the video is in that
+   field, and leave `--glossary` out otherwise: the title and chapter names
+   already serve as a glossary, and another field's list marks ordinary words
+   as errors.
 
    Use the user's destination or `LOCAL.md` instead of `notes/` when given.
    Omit `--out` when the user wants the text only in conversation. For a
@@ -60,14 +73,26 @@ as `unmarked`.
    names the file step 3 wrote, then add `--force` — a conflict anywhere else
    goes back to the user. Never rewrite transcript text directly.
    A digit correction requires explicit contextual or audio evidence. Add a
-   recurring, non-numeric correction to `names.txt` as
-   `Right Form: wrong form`.
+   recurring, non-numeric correction to the matching file in `glossaries/`
+   (or start one for a new field) as `Right Form: wrong form`. Never add a
+   wrong form that is also an ordinary word or phrase.
 
 ## Deliverables
 
 A **transcript** is the rendered, timestamped source. **Notes** are that document
 saved to a folder. A **summary** is prose written from the rendered source; it
 does not replace the evidence.
+
+A summary is bound by the transcript:
+
+- every statement traces to a timestamp in the rendered note. If you cannot
+  point to the passage, leave the statement out;
+- add no background knowledge about the speaker, the organisation or the
+  topic, even when you are confident it is right. Say what the video says;
+- when the track is not `manual`, open by naming its tier and language, for
+  example "From YouTube's automatic English captions";
+- when `--format context` reports an `## Omitted` block, reproduce it verbatim
+  and summarise only what was included.
 
 A summary must include:
 

@@ -16,6 +16,21 @@ changes.
   those notes were claiming human authorship. `--tiers manual` no longer
   selects an unmarked file; mark it `.manual.` or pass `--tiers unmarked`. The
   README now lists every filename marker.
+- `names.txt` moves to `glossaries/agent-engineering.txt`, one glossary per
+  field. Wrong forms that are ordinary English are gone: "Ada", "Colab",
+  "cowork", "azalea", "Rubrik", "clockwork", "Clyde", "hot code" and "cold
+  start problem" were being bracketed as names in unrelated sentences. The
+  `video-notes` skill passes a glossary only for a video in its field.
+
+**Skill**
+
+- `video-notes` binds summaries to the transcript: every statement traces to
+  a timestamp, no background knowledge is added, a non-`manual` track is named
+  up front, and an `## Omitted` block is reproduced verbatim. It also says the
+  tool chooses the track, and that a `manual` track in another language is a
+  translation.
+- Tests check that every command in a skill parses with the real CLI parser
+  and that any glossary it names exists.
 
 **Fixes**
 
