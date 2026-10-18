@@ -20,7 +20,11 @@ from youtube_transcript_notes import __version__
 from youtube_transcript_notes.errors import UnknownRenderer
 from youtube_transcript_notes.models import Correction, Lecture, Passage, Section
 from youtube_transcript_notes.render import get_renderer, renderers
-from youtube_transcript_notes.render.markdown import is_untouched, read_frontmatter
+from youtube_transcript_notes.render.markdown import (
+    is_untouched,
+    read_corrections_table,
+    read_frontmatter,
+)
 
 FULL_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
@@ -684,3 +688,92 @@ class TestCorrectionsTableSurvivesItsOwnContent:
         assert row == r"| a\|b | c\|d | 1 | named | e\|f |"
         cells = re.split(r"(?<!\\)\|", row)[1:-1]
         assert len(cells) == 5
+
+
+class TestReadingCorrectionsBack:
+    """A rerun carries a note's corrections over, so the table must read back
+    exactly what it was written from."""
+
+    @staticmethod
+    def _note(lecture: Lecture, *corrections: Correction) -> str:
+        return get_renderer("markdown").render(
+            replace(lecture, corrections=corrections)
+        )
+
+    def test_named_corrections_round_trip(self, minimal_lecture: Lecture) -> None:
+        note = self._note(
+            minimal_lecture,
+            Correction(wrong="quad code", right="Claude Code", evidence="given"),
+            # Everything `label` escapes, in every cell that is read back.
+            Correction(wrong="a|b\\c", right="[d] <e>", evidence="`f` | g"),
+        )
+
+        assert read_corrections_table(note) == [
+            {"wrong": "quad code", "right": "Claude Code", "evidence": "given"},
+            {"wrong": "a|b\\c", "right": "[d] <e>", "evidence": "`f` | g"},
+        ]
+
+    def test_near_misses_are_found_again_not_carried(
+        self, minimal_lecture: Lecture
+    ) -> None:
+        note = self._note(
+            minimal_lecture,
+            Correction(wrong="Domane", right="Demaine", distance=2, evidence="title"),
+        )
+
+        assert read_corrections_table(note) == []
+
+    def test_a_chapter_called_corrections_is_not_the_appendix(
+        self, full_lecture: Lecture
+    ) -> None:
+        chapters = (
+            *full_lecture.sections[:1],
+            replace(full_lecture.sections[1], title="Corrections"),
+        )
+        lecture = replace(full_lecture, sections=chapters)
+        note = self._note(lecture, Correction(wrong="x y", right="z", evidence="e"))
+
+        assert "\n## Corrections\n\n**[" in note
+        assert read_corrections_table(note) == [
+            {"wrong": "x y", "right": "z", "evidence": "e"}
+        ]
+
+    @pytest.mark.parametrize(
+        "note",
+        [
+            "# a note with no appendix\n",
+            # The 0.4 table, whose fourth column meant something else.
+            (
+                "# t\n\n## Corrections\n\n"
+                "| Transcribed | Probably | Times | Confidence | From |\n"
+                "|---|---|---|---|---|\n"
+                "| Omari | Omarchy | 8 | 1.00 | given |\n"
+            ),
+        ],
+    )
+    def test_anything_else_gives_nothing(self, note: str) -> None:
+        assert read_corrections_table(note) == []
+
+    def test_the_table_ends_at_its_first_gap(self) -> None:
+        note = (
+            "# t\n\n## Corrections\n\n"
+            "| Transcribed | Probably | Times | Match | From |\n"
+            "|---|---|---|---|---|\n| a | b | 1 | named | e |\n\n"
+            "| c | d | 1 | named | e |\n"
+        )
+
+        assert read_corrections_table(note) == [
+            {"wrong": "a", "right": "b", "evidence": "e"}
+        ]
+
+    def test_a_table_that_runs_to_the_end_of_the_file(self) -> None:
+        note = (
+            "# t\n\n## Corrections\n\n"
+            "| Transcribed | Probably | Times | Match | From |\n"
+            "|---|---|---|---|---|\n"
+            "| a | b | 1 | named | e |"
+        )
+
+        assert read_corrections_table(note) == [
+            {"wrong": "a", "right": "b", "evidence": "e"}
+        ]

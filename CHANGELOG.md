@@ -6,6 +6,17 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+**Fixes**
+
+- A note keeps its corrections. A rerun without the original
+  `--corrections` file — after an upgrade, or to pick up a retitle —
+  re-rendered this tool's note without them and reported it `updated`. The
+  rerun now reads back the corrections the note's appendix names outright and
+  applies them again; this run's `--corrections` and `--glossary` win where
+  they disagree. `--reset-corrections` starts clean, for withdrawing one.
+
 ## 0.6.0
 
 Notes you have written in are no longer overwritten, and long playlists are

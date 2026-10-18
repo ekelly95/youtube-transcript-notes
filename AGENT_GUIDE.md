@@ -79,6 +79,11 @@ match; if you reword that paragraph, update `INTRO` in the script too —
   from present-but-empty.
 - Use cached discovery only after transport failure, not after the live source
   reports a caption problem. Never cache signed caption URLs.
+- Carry a note's named corrections into its rerun, read back from its own
+  appendix (`read_corrections_table`). Only rows the table marks `named`:
+  near-misses are found again from the title, chapters and glossary every run.
+  The run's own `--corrections` and `--glossary` win; `--reset-corrections`
+  carries nothing.
 - Stop asking YouTube after `REFUSALS_BEFORE_STOPPING` refusals in a row
   (`BotCheck` or `RateLimited`, including ones answered from cache) and report
   the remaining remote sources as `NotAttempted`. One refusal can be a single

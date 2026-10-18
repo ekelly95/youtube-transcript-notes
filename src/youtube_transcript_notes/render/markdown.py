@@ -31,6 +31,7 @@ __all__ = [
     "GENERATOR",
     "MarkdownRenderer",
     "is_untouched",
+    "read_corrections_table",
     "read_frontmatter",
 ]
 
@@ -252,7 +253,7 @@ def _corrections(corrections: Sequence[Correction]) -> list[str]:
     if not corrections:
         return []
 
-    lines = ["## Corrections", ""]
+    lines = [_APPENDIX, ""]
     lines.append(
         f"{len(corrections)} spelling"
         f"{'' if len(corrections) == 1 else 's'} marked in the transcript "
@@ -260,7 +261,7 @@ def _corrections(corrections: Sequence[Correction]) -> list[str]:
         "with what each rests on."
     )
     lines.append("")
-    lines.append("| Transcribed | Probably | Times | Match | From |")
+    lines.append(_TABLE_HEADER)
     lines.append("|---|---|---|---|---|")
     for correction in corrections:
         lines.append(
@@ -272,10 +273,65 @@ def _corrections(corrections: Sequence[Correction]) -> list[str]:
     return lines
 
 
+#: The appendix heading and table header, as `_corrections` writes them and
+#: `read_corrections_table` finds them again.
+_APPENDIX = "## Corrections"
+_TABLE_HEADER = "| Transcribed | Probably | Times | Match | From |"
+
+#: How the table says a correction was named outright rather than measured.
+_NAMED = "named"
+
+
+def read_corrections_table(note: str) -> list[dict[str, str]]:
+    """The corrections a note names outright, as ``--corrections`` records.
+
+    Read back from this renderer's own appendix, so a rerun can carry them
+    over. Near-misses ("2 edits") are left out: every run finds those again
+    from the title, chapters and glossary. The appendix is the last section,
+    so a chapter that happens to be called "Corrections" is passed over, and
+    a table under any other header — an older format — gives nothing.
+    """
+    _, heading, appendix = note.rpartition(f"\n{_APPENDIX}\n")
+    if not heading:
+        return []
+    lines = appendix.split("\n")
+    if _TABLE_HEADER not in lines:
+        return []
+
+    records = []
+    # Past the header and its `|---|` rule; the table ends at its first gap.
+    for line in lines[lines.index(_TABLE_HEADER) + 2 :]:
+        if not line.startswith("| "):
+            break
+        cells = _cells(line)
+        if len(cells) == 5 and cells[3] == _NAMED:
+            wrong, right, _, _, evidence = cells
+            records.append({"wrong": wrong, "right": right, "evidence": evidence})
+    return records
+
+
+def _cells(row: str) -> list[str]:
+    """One table row's cells, with `label`'s backslash escapes undone."""
+    cells, cell, escaped = [], [], False
+    for char in row.strip()[1:-1]:
+        if escaped:
+            cell.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == "|":
+            cells.append("".join(cell).strip())
+            cell = []
+        else:
+            cell.append(char)
+    cells.append("".join(cell).strip())
+    return cells
+
+
 def _match(distance: int | None) -> str:
     """How a correction was found: named outright, or so many edits away."""
     if distance is None:
-        return "named"
+        return _NAMED
     return f"{distance} edit{'' if distance == 1 else 's'}"
 
 
