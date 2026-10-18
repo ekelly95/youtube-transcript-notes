@@ -70,6 +70,16 @@ class TranscriptFetcher:
             return Expansion(sources=(source,))
         return provider.expand(source)
 
+    def identity(self, source: str) -> str | None:
+        """The source id `source` will have, if that is known without fetching
+        anything and names the same recording everywhere. See
+        `SourceProvider.identity`."""
+        try:
+            provider = self.provider_for(source)
+        except UnknownProvider:
+            return None
+        return provider.identity(source)
+
     def list(self, source: str) -> TrackManifest:
         """Discover what transcripts exist, without downloading any of them."""
         return self.provider_for(source).list(source)

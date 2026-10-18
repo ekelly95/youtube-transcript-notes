@@ -114,7 +114,7 @@ Srini Devadas. I'm a professor of electrical engineering and computer science…
 ## CLI
 
 ```text
-youtube-transcript-notes <source>… [--out DIR] [--force]
+youtube-transcript-notes <source>… [--out DIR] [--force | --skip-existing]
   [--format markdown|plain|citation|jsonl|context] [--list]
   [--languages LANG…] [--tiers TIER…] [--budget N]
   [--glossary FILE] [--corrections FILE]
@@ -159,12 +159,13 @@ Documents go to stdout and failures to stderr. Exit code `0` means all items
 succeeded, `1` means some failed, and `2` means nothing was produced. With
 `--json`, results and failures share one machine-readable document.
 
-Four combinations are refused before any work starts, because each one asks
+These combinations are refused before any work starts, because each one asks
 for two different things at once: `--out` with `--list` (a listing is not a
 document to file), `--force` without `--out` (nothing is being overwritten),
 `--budget` with a format that has no budget to spend — only `context` does —
-and `--refresh` with `--no-cache` (one stores what it fetches, the other
-stores nothing).
+`--refresh` with `--no-cache` (one stores what it fetches, the other stores
+nothing), and `--skip-existing` without `--out`, with `--force`, or with any
+format but `markdown` (it recognises a note by its frontmatter).
 
 ## Trust and corrections
 
@@ -255,7 +256,14 @@ note you wrote, another video's note, or any local-file note, because a
 filename stem is not a unique identity. Notes written before 0.6.0 carry no
 fingerprint, so if you have not added to them, refresh them once with
 `--force`.
-A title changed upstream creates a new file and leaves the old one alone.
+A title changed upstream does not start a second note: the run finds this
+tool's note for the same video under its old name — the name still ends with
+the video ID — and updates that one, so links to it keep working.
+
+`--skip-existing` passes over any YouTube video that already has such a note in
+`--out`, without asking YouTube about it. The video ID is read from the URL, so
+a long playlist resumes with requests only for the videos still to do. Leave it
+off to refresh or correct notes.
 
 The default cache is:
 
@@ -357,7 +365,8 @@ first; if replacing it is what you want, add `--force`.
 **A long playlist.** Videos are fetched one at a time, a second apart, with a
 `[n/N]` progress line on stderr as each starts. With `--out`, each note is
 written as soon as its video is done, so stopping with Ctrl-C keeps everything
-finished; run the same command again to continue. Exit code `1` afterwards
+finished; run the same command again with `--skip-existing` to continue
+without asking YouTube about the videos already done. Exit code `1` afterwards
 means some items failed and the rest succeeded — the run is not discarded
 because one video was.
 

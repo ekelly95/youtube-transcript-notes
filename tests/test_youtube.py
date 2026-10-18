@@ -371,6 +371,49 @@ class TestSourceRecognition:
         assert not YouTubeProvider.handles("https://[::1")
 
 
+class TestIdentityWithoutTheNetwork:
+    """`--skip-existing` must know which video a source names before it asks
+    YouTube anything — that is the request it exists to save."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            WATCH_URL,
+            VIDEO_ID,
+            "https://youtu.be/HtSuA80QTyo?list=PL123",
+            "https://www.youtube.com/shorts/HtSuA80QTyo",
+            "youtube.com/watch?v=HtSuA80QTyo&t=30",
+        ],
+    )
+    def test_every_spelling_of_a_video_names_it(self, source: str) -> None:
+        assert YouTubeProvider(extractor=_unreachable).identity(source) == VIDEO_ID
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "https://www.youtube.com/playlist?list=PL123",
+            "https://www.youtube.com/@somechannel",
+        ],
+    )
+    def test_a_collection_names_no_one_video(self, source: str) -> None:
+        assert YouTubeProvider(extractor=_unreachable).identity(source) is None
+
+    def test_a_local_or_unknown_source_has_no_global_identity(
+        self, tmp_path: Path
+    ) -> None:
+        caption = tmp_path / "week-01.en.vtt"
+        caption.write_text("WEBVTT\n", encoding="utf-8")
+        fetcher = TranscriptFetcher()
+
+        assert fetcher.identity(str(caption)) is None
+        assert fetcher.identity("definitely-not-a-real-path-9f3a") is None
+        assert fetcher.identity(VIDEO_ID) == VIDEO_ID
+
+
+def _unreachable(url: str) -> dict:
+    raise AssertionError(f"asked the network about {url}")
+
+
 class TestCollections:
     @pytest.mark.parametrize(
         "source",

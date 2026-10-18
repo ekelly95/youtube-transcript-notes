@@ -55,7 +55,9 @@ as `unmarked`.
    Use the user's destination or `LOCAL.md` instead of `notes/` when given.
    Omit `--out` when the user wants the text only in conversation. For a
    playlist over about fifty videos, add `--delay 3` to stay clear of
-   YouTube's bot check. Never use `--force` without reading the conflicting
+   YouTube's bot check. To resume a playlist that was interrupted or stopped
+   at `NOT_ATTEMPTED`, rerun with `--skip-existing`; never add it to the step 4
+   corrections rerun, which must update the note. Never use `--force` without reading the conflicting
    file and asking the user whether to replace it, except as step 4 allows.
 
 4. Unless the user asked for a quick result, inspect the rendered note for

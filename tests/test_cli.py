@@ -612,6 +612,209 @@ class TestStoppingWhenYouTubeRefuses:
         assert [e["code"] for e in payload["errors"]] == ["NOT_ATTEMPTED"]
 
 
+class TestSkippingFiledNotes:
+    """`--skip-existing` resumes a long playlist without asking YouTube about
+    any video whose note is already written."""
+
+    IDS = TestStoppingWhenYouTubeRefuses.IDS
+    PLAYLIST = TestStoppingWhenYouTubeRefuses.PLAYLIST
+
+    def _filed(
+        self, notes: Path, monkeypatch: pytest.MonkeyPatch, refused=None
+    ) -> list[str]:
+        """Write every video's note once, then rewire; returns what is asked next."""
+        self._wire(monkeypatch)
+        assert main([self.PLAYLIST, "--out", str(notes), "--no-cache"]) == EXIT_OK
+        return self._wire(monkeypatch, refused)
+
+    @staticmethod
+    def _wire(monkeypatch: pytest.MonkeyPatch, refused=None) -> list[str]:
+        return TestStoppingWhenYouTubeRefuses._wire(monkeypatch, refused or {})
+
+    def test_a_finished_playlist_asks_youtube_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing, capsys
+    ) -> None:
+        notes = tmp_path / "notes"
+        asked = self._filed(notes, monkeypatch)
+        capsys.readouterr()
+
+        code = main(
+            [self.PLAYLIST, "--out", str(notes), "--skip-existing", "--no-cache"]
+        )
+
+        assert code == EXIT_OK
+        assert asked == []
+        out = capsys.readouterr().out
+        assert out.count("skipped ") == len(self.IDS)
+        # Nothing asked, so nothing to wait between.
+        assert no_pacing == [cli.DEFAULT_DELAY] * (len(self.IDS) - 1)
+
+    def test_only_the_missing_notes_are_fetched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing
+    ) -> None:
+        notes = tmp_path / "notes"
+        asked = self._filed(notes, monkeypatch)
+        (notes / f"Lecture {self.IDS[2]} ({self.IDS[2]}).md").unlink()
+
+        result = run([self.PLAYLIST, "--out", str(notes), "--skip-existing", "--json"])
+
+        assert asked == [self.IDS[2]]
+        payload = json.loads(result.text)
+        assert payload["ok"] is True
+        assert len(payload["skipped"]) == len(self.IDS) - 1
+        assert len(payload["files"]) == len(self.IDS)
+
+    def test_a_file_that_merely_ends_with_the_id_is_not_a_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing
+    ) -> None:
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        (notes / f"My thoughts ({self.IDS[0]}).md").write_text("mine\n", "utf-8")
+        asked = self._wire(monkeypatch)
+
+        run([self.PLAYLIST, "--out", str(notes), "--skip-existing", "--no-cache"])
+
+        assert asked == list(self.IDS)
+
+    def test_skipped_videos_are_skipped_even_after_youtube_stops(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing
+    ) -> None:
+        """Passing a filed note over costs no request, so a block changes
+        nothing about it."""
+        notes = tmp_path / "notes"
+        asked = self._filed(
+            notes, monkeypatch, refused=dict.fromkeys(self.IDS, BotCheck)
+        )
+        for video in self.IDS[:2]:
+            (notes / f"Lecture {video} ({video}).md").unlink()
+
+        result = run([self.PLAYLIST, "--out", str(notes), "--skip-existing", "--json"])
+
+        assert asked == list(self.IDS[:2])
+        payload = json.loads(result.text)
+        assert len(payload["skipped"]) == 3
+        assert [e["code"] for e in payload["errors"]] == ["BOT_CHECK", "BOT_CHECK"]
+
+    def test_everything_skipped_or_failed_is_still_a_partial_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing
+    ) -> None:
+        notes = tmp_path / "notes"
+        self._filed(notes, monkeypatch, refused={self.IDS[0]: LectureUnavailable})
+        (notes / f"Lecture {self.IDS[0]} ({self.IDS[0]}).md").unlink()
+
+        result = run([self.PLAYLIST, "--out", str(notes), "--skip-existing"])
+
+        assert result.exit_code == EXIT_PARTIAL
+
+    def test_local_files_are_never_skipped(self, tmp_path: Path, capsys) -> None:
+        """A stem is not an identity, so it cannot prove the note is this one."""
+        course = _course(tmp_path / "course", weeks=1)
+        notes = tmp_path / "notes"
+        assert main([str(course), "--out", str(notes)]) == EXIT_OK
+        capsys.readouterr()
+
+        assert main([str(course), "--out", str(notes), "--skip-existing"]) == EXIT_OK
+        assert capsys.readouterr().out.startswith("unchanged ")
+
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            ["--skip-existing"],
+            ["--skip-existing", "--out", "notes", "--force"],
+            ["--skip-existing", "--out", "notes", "--format", "jsonl"],
+            ["--skip-existing", "--out", "notes", "--format", "context"],
+        ],
+    )
+    def test_combinations_that_cannot_mean_anything_are_refused(
+        self, flags: list[str]
+    ) -> None:
+        with pytest.raises(SystemExit):
+            run([SOURCE, *flags])
+
+
+class TestRetitledVideos:
+    """A video retitled upstream keeps the note it already has."""
+
+    IDS = TestStoppingWhenYouTubeRefuses.IDS
+    PLAYLIST = TestStoppingWhenYouTubeRefuses.PLAYLIST
+    VIDEO = IDS[0]
+    TODAY = f"Lecture {IDS[0]} ({IDS[0]}).md"
+
+    def _filed_under(self, notes: Path, monkeypatch, old_title: str) -> Path:
+        """This video's note, as written back when its title was `old_title`."""
+        TestStoppingWhenYouTubeRefuses._wire(monkeypatch, {})
+        assert main([self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_OK
+        old = notes / f"{old_title} ({self.VIDEO}).md"
+        (notes / self.TODAY).rename(old)
+        return old
+
+    def test_the_note_under_the_old_title_is_the_one_used(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        notes = tmp_path / "notes"
+        old = self._filed_under(notes, monkeypatch, "What it was called")
+        capsys.readouterr()
+
+        assert main([self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_OK
+
+        assert capsys.readouterr().out.strip().endswith(old.name)
+        assert sorted(path.name for path in notes.iterdir()) == [old.name]
+
+    def test_an_edited_note_under_the_old_title_is_refused_not_duplicated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notes = tmp_path / "notes"
+        old = self._filed_under(notes, monkeypatch, "What it was called")
+        with old.open("a", encoding="utf-8") as handle:
+            handle.write("\nmine\n")
+
+        assert main([self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_FAILED
+        assert sorted(path.name for path in notes.iterdir()) == [old.name]
+
+    def test_todays_name_wins_when_both_are_there(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        notes = tmp_path / "notes"
+        old = self._filed_under(notes, monkeypatch, "What it was called")
+        (notes / self.TODAY).write_bytes(old.read_bytes())
+        capsys.readouterr()
+
+        assert main([self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_OK
+        assert capsys.readouterr().out.strip() == f"unchanged {notes / self.TODAY}"
+
+    def test_the_same_video_twice_in_one_run_still_gets_two_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing, capsys
+    ) -> None:
+        notes = tmp_path / "notes"
+        old = self._filed_under(notes, monkeypatch, "What it was called")
+        capsys.readouterr()
+
+        assert (
+            main([self.VIDEO, self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_OK
+        )
+        written = capsys.readouterr().out.splitlines()
+        assert len(written) == 2
+        assert written[0].endswith(old.name)
+        assert written[1] == f"wrote {notes / self.TODAY}"
+
+    def test_a_context_file_never_replaces_the_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`context` writes `.md` under the same name, but it is not a note and
+        carries no frontmatter: replacing the note with it would lose the note."""
+        TestStoppingWhenYouTubeRefuses._wire(monkeypatch, {})
+        notes = tmp_path / "notes"
+        assert main([self.VIDEO, "--out", str(notes), "--no-cache"]) == EXIT_OK
+        note = (notes / self.TODAY).read_text(encoding="utf-8")
+
+        code = main(
+            [self.VIDEO, "--out", str(notes), "--format", "context", "--no-cache"]
+        )
+
+        assert code == EXIT_FAILED
+        assert (notes / self.TODAY).read_text(encoding="utf-8") == note
+
+
 def _course(directory: Path, weeks: int = 3) -> Path:
     """A folder of caption files, one lecture per week."""
     directory.mkdir(parents=True, exist_ok=True)

@@ -72,6 +72,14 @@ class SourceProvider(ABC):
         """The individually fetchable sources this names. Almost always itself."""
         return Expansion(sources=(source,))
 
+    def identity(self, source: str) -> str | None:
+        """The source id this will have, worked out without the network.
+
+        None unless the id is global — the same recording wherever it is
+        named — and readable from the source itself. A local stem is neither.
+        """
+        return None
+
     @abstractmethod
     def list(self, source: str) -> TrackManifest:
         """Discover available tracks. Must not download any caption payload."""

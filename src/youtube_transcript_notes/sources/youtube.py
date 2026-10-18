@@ -255,6 +255,12 @@ class YouTubeProvider(SourceProvider):
             sources=tuple(_watch_url(video) for video in ids), origin=source
         )
 
+    def identity(self, source: str) -> str | None:
+        """The video id, read from the address; None for a collection."""
+        if _is_collection(source):
+            return None
+        return _video_id(source)
+
     def list(self, source: str) -> TrackManifest:
         # `list` answers for one video; expansion happened a step earlier.
         if _is_collection(source):
