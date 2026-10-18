@@ -25,6 +25,11 @@ changes.
 
 **Fixes**
 
+- Filenames drop `#`, `^`, `[` and `]`. An Obsidian wikilink reads them as a
+  heading, a block reference or its own brackets, so a note named after
+  "The #1 Way…" could not be linked to by name. A note already saved under
+  such a name is not renamed: the next run writes the new name beside it, so
+  move anything you added and delete the old one.
 - A run stops asking YouTube once it has been refused twice in a row (a bot
   check or HTTP 429). It used to carry on through the whole playlist, each
   request failing the same way and lengthening the block. The videos it did

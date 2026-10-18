@@ -1,8 +1,9 @@
 """Turning a title into a filename.
 
 Pure functions: `cli` works out every path before anything is written. The
-rules are Windows's, the strictest, so a name legal there is legal everywhere.
-Non-ASCII titles are kept as they are.
+rules are Windows's, the strictest, so a name legal there is legal everywhere,
+plus the few characters that break an Obsidian link to the note. Non-ASCII
+titles are kept as they are.
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ __all__ = ["filename_for", "sanitise"]
 
 #: Characters no Windows filename may contain, plus the control range. Stripped
 #: on every platform so a synced vault carries the same names everywhere.
-_FORBIDDEN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+#: ``#``, ``^``, ``[`` and ``]`` are legal on disk, but a wikilink reads them as
+#: a heading, a block reference or the link's own brackets, so a note named
+#: "The #1 Way" could not be linked to by name.
+_FORBIDDEN = re.compile(r'[<>:"/\\|?*#^\[\]\x00-\x1f]')
 
 _WHITESPACE = re.compile(r"\s+")
 

@@ -29,6 +29,14 @@ class TestSanitise:
     def test_characters_windows_refuses_are_removed(self, character: str) -> None:
         assert character not in sanitise(f"Peak{character}Finding")
 
+    @pytest.mark.parametrize("character", list("#^[]"))
+    def test_characters_that_break_a_wikilink_are_removed(self, character: str) -> None:
+        assert character not in sanitise(f"Peak{character}Finding")
+
+    def test_a_ranked_title_still_reads(self) -> None:
+        """Obsidian would link `[[The #1 Way…]]` to a heading called "1 Way…"."""
+        assert sanitise("The #1 Way to Learn [2026]") == "The 1 Way to Learn 2026"
+
     def test_control_characters_are_removed(self) -> None:
         assert sanitise("Peak\x00\x1fFinding") == "Peak Finding"
 

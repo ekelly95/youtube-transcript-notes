@@ -223,7 +223,9 @@ line.
 
 Remote output names include the source ID, such as
 `Peak Finding (HtSuA80QTyo).md`. This prevents a video title from claiming an
-unrelated note. Local files keep their stem.
+unrelated note. Local files keep their stem. Characters Windows refuses are
+dropped from names on every platform, and so are `#`, `^`, `[` and `]`, which
+would break an Obsidian `[[link]]` to the note.
 
 Markdown notes open with YAML frontmatter — title, source ID, URL, channel,
 publication date, caption tier and language — which Obsidian shows as
