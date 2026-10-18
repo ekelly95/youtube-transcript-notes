@@ -8,6 +8,7 @@ interpreter, fails quietly: every command runs against the wrong directory.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,9 @@ class TestGlobalise:
 
     def test_no_relative_path_survives(self, installed: str) -> None:
         assert ".venv/Scripts" not in installed
+        # Absolute interpreters contain `.venv/bin/python`; a relative one
+        # starts a word.
+        assert not re.search(r"(?<![\w/])\.venv/", installed)
         assert "repository root" not in installed
         assert " glossaries/" not in installed
         assert "`glossaries/" not in installed

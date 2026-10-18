@@ -5,9 +5,9 @@ description: Turn a captioned video â€” a lecture, talk, podcast or interview â€
 
 # Video notes
 
-Run commands from the repository root. Use `.venv/Scripts/python` on Windows
-or `.venv/bin/python` on macOS and Linux. If `LOCAL.md` exists beside this
-file, apply its machine-specific output folder and post-processing defaults.
+Run commands from the repository root. They are written with `.venv/bin/python`;
+on Windows use `.venv/Scripts/python`. If `LOCAL.md` exists beside this file,
+apply its machine-specific output folder and post-processing defaults.
 
 ## Workflow
 
@@ -19,7 +19,7 @@ as `unmarked`.
 1. Inspect available tracks without downloading captions:
 
    ```bash
-   .venv/Scripts/python -m youtube_transcript_notes <source> --list
+   .venv/bin/python -m youtube_transcript_notes <source> --list
    ```
 
 2. Note which track the tool will use. It chooses for you: the most trusted
@@ -42,7 +42,7 @@ as `unmarked`.
 3. Render, with a domain glossary when one fits:
 
    ```bash
-   .venv/Scripts/python -m youtube_transcript_notes <source> \
+   .venv/bin/python -m youtube_transcript_notes <source> \
      --glossary glossaries/<domain>.txt --out notes/
    ```
 

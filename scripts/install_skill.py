@@ -29,13 +29,14 @@ DESTINATION = Path.home() / ".claude" / "skills" / "video-notes" / "SKILL.md"
 #: so a reworded skill stops this script rather than installing a copy that
 #: still says "from the repository root".
 INTRO = (
-    "Run commands from the repository root. Use `.venv/Scripts/python` on Windows\n"
-    "or `.venv/bin/python` on macOS and Linux. If `LOCAL.md` exists beside this\n"
-    "file, apply its machine-specific output folder and post-processing defaults."
+    "Run commands from the repository root. They are written with "
+    "`.venv/bin/python`;\n"
+    "on Windows use `.venv/Scripts/python`. If `LOCAL.md` exists beside this file,\n"
+    "apply its machine-specific output folder and post-processing defaults."
 )
 
 #: How the repository copy spells the interpreter in its commands.
-RELATIVE_PYTHON = ".venv/Scripts/python"
+RELATIVE_PYTHON = ".venv/bin/python"
 
 #: Folders the skill names relative to the repository root. The lookbehind
 #: leaves a longer path alone, such as one already made absolute.

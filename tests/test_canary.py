@@ -2,7 +2,7 @@
 
 Deselected by default — see ``addopts`` in pyproject.toml. Run it deliberately:
 
-    .venv/Scripts/python -m pytest -m canary
+    .venv/bin/python scripts/check.py --canary
 
 Everything else in this suite runs from captured fixtures, and a fixture cannot
 answer the one question this file exists to ask: whether the shape the tool
