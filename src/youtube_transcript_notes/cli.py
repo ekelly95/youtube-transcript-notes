@@ -52,6 +52,7 @@ from .render.markdown import (
     GENERATOR,
     MarkdownRenderer,
     is_untouched,
+    read_corrections_table,
     read_frontmatter,
 )
 from .resolve import TrackManifest
@@ -236,15 +237,18 @@ def _outcomes(
             yield _Outcome(source, notice=expansion.stale_reason)
         sources.extend(expansion.sources)
 
+    # Only a Markdown note records its corrections where a rerun can read them.
+    carry = isinstance(renderer, MarkdownRenderer) and not args.reset_corrections
+
     paced = False
     # The refusals in a row, as reported, counting remote sources only.
     refusals: list[str] = []
     for position, source in enumerate(sources, start=1):
         remote = _is_remote(fetcher, source)
-        if remote and args.skip_existing:
-            # Known from the address alone, so asking YouTube is not needed.
-            identity = fetcher.identity(source)
-            existing = notes.find(identity) if identity is not None else None
+        # Known from the address alone, so asking YouTube is not needed.
+        identity = fetcher.identity(source) if remote else None
+        if identity is not None and args.skip_existing:
+            existing = notes.find(identity)
             if existing is not None:
                 yield _Outcome(source, existing=existing)
                 continue
@@ -277,8 +281,13 @@ def _outcomes(
             if args.list:
                 yield _Outcome(source, listing=_describe(manifest))
             else:
+                carried = (
+                    notes.corrections(identity)
+                    if carry and identity is not None
+                    else None
+                )
                 lecture = manifest.find(args.languages, _tiers(args)).fetch(
-                    glossary=glossary
+                    glossary=_merged(glossary, carried)
                 )
                 # Rendered here, so a renderer that raises costs this source.
                 yield _Outcome(
@@ -292,6 +301,13 @@ def _outcomes(
             yield _Outcome(source, failure=_wrap(source, error))
         if remote:
             refusals = [*refusals, refusal] if refusal is not None else []
+
+
+def _merged(run: Glossary | None, carried: Glossary | None) -> Glossary | None:
+    """This run's glossary and corrections over those carried from the note."""
+    if carried is None:
+        return run
+    return carried if run is None else run.merged_with(carried)
 
 
 def _refusal(error: TranscriptError) -> str | None:
@@ -336,11 +352,32 @@ class _Notes:
         `prefer` names the file to choose when there are several — the name
         the source would get today — and otherwise the first by name wins.
         """
+        found = self.read(source_id, prefer)
+        return found[0] if found is not None else None
+
+    def read(
+        self, source_id: str, prefer: str | None = None
+    ) -> tuple[Path, str] | None:
+        """`find`, with the note's text."""
         candidates = self._named.get(sanitise(source_id), [])
         for path in sorted(candidates, key=lambda path: path.name != prefer):
-            if _own_note(path, source_id) is not None:
-                return path
+            note = _own_note(path, source_id)
+            if note is not None:
+                return path, note
         return None
+
+    def corrections(self, source_id: str) -> Glossary | None:
+        """The corrections this source's note already names, to carry over.
+
+        A rerun without the original ``--corrections`` file would otherwise
+        re-render the note without them and report it `updated`.
+        """
+        found = self.read(source_id)
+        if found is None:
+            return None
+        path, note = found
+        records = read_corrections_table(note)
+        return read_corrections(records, path.name) if records else None
 
 
 class _Planner:
@@ -775,6 +812,17 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--reset-corrections",
+        action="store_true",
+        help=(
+            "Do not carry over the corrections an existing note already "
+            "names. Without it, a rerun keeps them, so a note never loses its "
+            "corrections because the original --corrections file was not "
+            "passed again. Use it to drop a correction that turned out wrong; "
+            "pass --corrections with the ones to keep."
+        ),
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help=(
@@ -857,6 +905,10 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--force applies to --out, which is what writes files")
     if args.delay < 0:
         parser.error("--delay cannot be negative")
+    if args.reset_corrections and args.out is None:
+        parser.error(
+            "--reset-corrections applies to notes already in --out, which was not given"
+        )
     if args.skip_existing and args.out is None:
         parser.error("--skip-existing looks for notes in --out, which was not given")
     if args.skip_existing and args.force:

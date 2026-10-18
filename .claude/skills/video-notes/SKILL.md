@@ -70,7 +70,10 @@ as `unmarked`.
    ```
 
    Rerun the step 3 command with `--corrections <file>` added. For a YouTube
-   source the tool recognises its own note from step 3 and reports `updated`.
+   source the tool recognises its own note from step 3 and reports `updated`;
+   it also keeps the corrections the note already names, so the file needs
+   only the new ones, and no later rerun loses them. To withdraw a correction,
+   add `--reset-corrections` and list every correction to keep.
    For a local caption file it cannot, and refuses: check that the refusal
    names the file step 3 wrote, then add `--force` — a conflict anywhere else
    goes back to the user. `OUTPUT_EDITED` means someone has written in the

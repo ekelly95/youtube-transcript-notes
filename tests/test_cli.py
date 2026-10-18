@@ -815,6 +815,96 @@ class TestRetitledVideos:
         assert (notes / self.TODAY).read_text(encoding="utf-8") == note
 
 
+class TestCorrectionsSurviveReruns:
+    """A note keeps the corrections it names: a rerun without the original
+    --corrections file used to re-render it without them, as `updated`."""
+
+    VIDEO = TestStoppingWhenYouTubeRefuses.IDS[0]
+    NAME = f"Lecture {VIDEO} ({VIDEO}).md"
+
+    @staticmethod
+    def _table(tmp_path: Path, name: str, *pairs: tuple[str, str]) -> str:
+        table = tmp_path / name
+        table.write_text(
+            json.dumps([{"wrong": w, "right": r, "evidence": "e"} for w, r in pairs]),
+            encoding="utf-8",
+        )
+        return str(table)
+
+    def _run(self, notes: Path, *flags: str) -> int:
+        return main([self.VIDEO, "--out", str(notes), "--no-cache", *flags])
+
+    def _corrected(self, tmp_path: Path, monkeypatch, capsys) -> Path:
+        TestStoppingWhenYouTubeRefuses._wire(monkeypatch, {})
+        notes = tmp_path / "notes"
+        first = self._table(tmp_path, "first.json", ("Erik Domane", "Erik Demaine"))
+        assert self._run(notes, "--corrections", first) == EXIT_OK
+        capsys.readouterr()
+        return notes / self.NAME
+
+    def test_a_rerun_without_the_file_keeps_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        note = self._corrected(tmp_path, monkeypatch, capsys)
+        before = note.read_text(encoding="utf-8")
+
+        assert self._run(note.parent) == EXIT_OK
+
+        assert capsys.readouterr().out.startswith("unchanged ")
+        assert note.read_text(encoding="utf-8") == before
+        assert "Erik Domane [Erik Demaine]" in before
+
+    def test_new_corrections_join_the_ones_already_there(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        note = self._corrected(tmp_path, monkeypatch, capsys)
+        more = self._table(tmp_path, "more.json", ("Srini Devadas", "Srini D."))
+
+        assert self._run(note.parent, "--corrections", more) == EXIT_OK
+
+        text = note.read_text(encoding="utf-8")
+        assert "Erik Domane [Erik Demaine]" in text
+        assert "Srini Devadas [Srini D.]" in text
+
+    def test_this_run_wins_where_the_two_disagree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        note = self._corrected(tmp_path, monkeypatch, capsys)
+        fixed = self._table(tmp_path, "fixed.json", ("Erik Domane", "Erik D."))
+
+        assert self._run(note.parent, "--corrections", fixed) == EXIT_OK
+
+        text = note.read_text(encoding="utf-8")
+        assert "Erik Domane [Erik D.]" in text
+        assert "[Erik Demaine]" not in text
+
+    def test_reset_drops_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        note = self._corrected(tmp_path, monkeypatch, capsys)
+
+        assert self._run(note.parent, "--reset-corrections") == EXIT_OK
+
+        assert capsys.readouterr().out.startswith("updated ")
+        assert "[Erik Demaine]" not in note.read_text(encoding="utf-8")
+
+    def test_reset_without_out_is_refused(self) -> None:
+        with pytest.raises(SystemExit):
+            run([SOURCE, "--reset-corrections"])
+
+    def test_a_local_note_carries_nothing(self, tmp_path: Path, capsys) -> None:
+        """Local notes are never updated in place, so there is nothing to keep
+        in step; a stem names no recording to read corrections for."""
+        table = self._table(tmp_path, "first.json", ("Erik Domane", "Erik Demaine"))
+        notes = tmp_path / "notes"
+        assert main([SOURCE, "--out", str(notes), "--corrections", table]) == EXIT_OK
+        capsys.readouterr()
+
+        result = run([SOURCE, "--out", str(notes), "--force"])
+
+        assert "[Erik Demaine]" not in result.files[0].text
+
+
 def _course(directory: Path, weeks: int = 3) -> Path:
     """A folder of caption files, one lecture per week."""
     directory.mkdir(parents=True, exist_ok=True)

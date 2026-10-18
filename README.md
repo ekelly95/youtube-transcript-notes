@@ -214,6 +214,13 @@ brackets ordinary words. An installed copy does not include the folder.
 `evidence` fields. Corrections appear as `quad code [Claude Code]` and in an
 appendix. The original caption text remains intact.
 
+A note keeps its corrections. When a run re-renders this tool's note for a
+YouTube video, it reads back every correction the note's appendix names
+outright and applies it again, so a rerun after an upgrade does not need the
+original file. This run's `--corrections` and `--glossary` win where they
+disagree. To drop a correction that turned out wrong, rerun with
+`--reset-corrections` and pass `--corrections` with the ones to keep.
+
 Local caption filenames may include tier and language metadata between the
 stem and the extension, for example `week-01.auto.en.vtt`:
 
