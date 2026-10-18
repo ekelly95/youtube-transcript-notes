@@ -6,7 +6,10 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
-## Unreleased
+## 0.6.1
+
+A note keeps its corrections when it is re-rendered, so upgrading or
+rerunning no longer drops them.
 
 **Fixes**
 
