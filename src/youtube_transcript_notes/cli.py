@@ -70,8 +70,8 @@ WROTE, UNCHANGED, UPDATED = "wrote", "unchanged", "updated"
 #: and so cannot show it was not.
 _EDITED = "it has been edited since this tool wrote it"
 _UNSEALED = (
-    "it was written by an earlier version that recorded no fingerprint, so "
-    "there is no telling whether it has been edited"
+    "it was written by an earlier version that recorded no fingerprint, and "
+    "cannot show it is unedited"
 )
 _UNSEALED_TRY = (
     "If you have not added anything to it, pass --force once. Notes written "
