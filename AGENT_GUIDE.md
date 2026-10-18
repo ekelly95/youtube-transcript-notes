@@ -9,6 +9,11 @@ a contract changes.
 over the other; `tests/test_harness.py` fails on any drift, including a mirror
 left behind after its original was removed.
 
+`scripts/install_skill.py` installs `video-notes` into `~/.claude/skills` with
+this clone's absolute paths. It rewrites the skill's opening paragraph by exact
+match; if you reword that paragraph, update `INTRO` in the script too —
+`tests/test_install_skill.py` fails until you do.
+
 ## Product contracts
 
 1. `list()` and `expand()` discover sources without downloading caption
