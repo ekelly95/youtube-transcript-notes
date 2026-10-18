@@ -23,6 +23,14 @@ changes.
   they are unedited and are refused the same way. The refusal says so; if you
   have not added to one, pass `--force` once.
 
+**Fixes**
+
+- A run stops asking YouTube once it has been refused twice in a row (a bot
+  check or HTTP 429). It used to carry on through the whole playlist, each
+  request failing the same way and lengthening the block. The videos it did
+  not reach are reported as `NOT_ATTEMPTED`, listed once on stderr with one
+  remedy; local caption files in the same run are still processed.
+
 ## 0.5.0
 
 Fixes from an outside audit. Trust tiers now say only what is known about

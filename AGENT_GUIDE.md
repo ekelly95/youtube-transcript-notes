@@ -71,6 +71,11 @@ left behind after its original was removed.
   from present-but-empty.
 - Use cached discovery only after transport failure, not after the live source
   reports a caption problem. Never cache signed caption URLs.
+- Stop asking YouTube after `REFUSALS_BEFORE_STOPPING` refusals in a row
+  (`BotCheck` or `RateLimited`, including ones answered from cache) and report
+  the remaining remote sources as `NotAttempted`. One refusal can be a single
+  track's throttling; two in a row is the address, and more requests only
+  lengthen the block. Local sources carry on.
 - Register the local provider first so an existing path beats an ambiguous
   eleven-character video ID.
 - Render inside `_outcomes`' per-source loop, so a lecture that fetches but
