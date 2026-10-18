@@ -8,6 +8,17 @@ changes.
 
 ## Unreleased
 
+**Added**
+
+- `--skip-existing` passes over any YouTube video that already has this
+  tool's note in `--out`, without asking YouTube about it: the video ID comes
+  from the URL. Resuming a long playlist now costs requests only for the
+  videos still to do. It needs `--out` and Markdown, and refuses `--force`.
+- `scripts/install_skill.py` installs the `video-notes` skill into
+  `~/.claude/skills` with the clone's absolute paths, so it works from any
+  directory; `--check` reports a missing or stale copy. A hand-made global
+  copy drifts from the repository's skill without anyone noticing.
+
 **Breaking changes**
 
 - A rerun no longer replaces this tool's own note once someone has written in
@@ -23,20 +34,19 @@ changes.
   they are unedited and are refused the same way. The refusal says so; if you
   have not added to one, pass `--force` once.
 
-**Added**
-
-- `scripts/install_skill.py` installs the `video-notes` skill into
-  `~/.claude/skills` with the clone's absolute paths, so it works from any
-  directory; `--check` reports a missing or stale copy. A hand-made global
-  copy drifts from the repository's skill without anyone noticing.
-
 **Fixes**
 
+- A video retitled upstream updates its existing note, found by the ID at
+  the end of its name, rather than starting a second note beside it. Links
+  to the note keep working.
+- `--format context --out DIR` writes `.md` under the same name as the
+  Markdown note, and could replace an untouched note with context output,
+  reported as `updated`. Only a Markdown run now treats a file as this tool's
+  note; a context file in the way is refused like any other.
 - Filenames drop `#`, `^`, `[` and `]`. An Obsidian wikilink reads them as a
   heading, a block reference or its own brackets, so a note named after
   "The #1 Way…" could not be linked to by name. A note already saved under
-  such a name is not renamed: the next run writes the new name beside it, so
-  move anything you added and delete the old one.
+  such a name keeps it; rename it in Obsidian, which updates the links too.
 - A run stops asking YouTube once it has been refused twice in a row (a bot
   check or HTTP 429). It used to carry on through the whole playlist, each
   request failing the same way and lengthening the block. The videos it did

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -42,11 +43,17 @@ from .errors import (
 )
 from .limits import MAX_CORRECTIONS, MAX_GLOSSARY_BYTES, MAX_PAYLOAD_BYTES, read_capped
 from .models import Lecture, TrustTier
-from .naming import filename_for
+from .naming import filename_for, sanitise
 from .redact import redact
 from .refine import Glossary, read_corrections, read_glossary
 from .render import Renderer, get_renderer, renderers
-from .render.markdown import FINGERPRINT, GENERATOR, is_untouched, read_frontmatter
+from .render.markdown import (
+    FINGERPRINT,
+    GENERATOR,
+    MarkdownRenderer,
+    is_untouched,
+    read_frontmatter,
+)
 from .resolve import TrackManifest
 
 __all__ = ["CliResult", "OutputFile", "main", "run"]
@@ -81,6 +88,9 @@ _REFUSALS: tuple[tuple[type[TranscriptError], str], ...] = (
 #: What a write did: created or replaced (with --force), left identical, or
 #: replaced this tool's own earlier, unedited note for the same video.
 WROTE, UNCHANGED, UPDATED = "wrote", "unchanged", "updated"
+
+#: A source passed over by --skip-existing: its note is already filed.
+SKIPPED = "skipped"
 
 #: Why an own note is refused: it was edited, or it predates the fingerprint
 #: and so cannot show it was not.
@@ -150,8 +160,14 @@ class _Decision:
     listings: tuple[str, ...] = ()
     documents: tuple[_Document, ...] = ()
     files: tuple[OutputFile, ...] = ()
+    skipped: tuple[Path, ...] = ()
     failures: tuple[tuple[str, TranscriptError], ...] = ()
     notices: tuple[tuple[str, TranscriptError], ...] = ()
+
+    @property
+    def filed(self) -> bool:
+        """Whether this run reports files rather than printing documents."""
+        return bool(self.files or self.skipped)
 
 
 @dataclass(frozen=True)
@@ -163,6 +179,8 @@ class _Outcome:
     listing: str | None = None
     failure: TranscriptError | None = None
     notice: TranscriptError | None = None
+    existing: Path | None = None
+    """The note already filed for this source, when --skip-existing passed it."""
 
 
 #: Told the position, the total and the source, before each source is worked on.
@@ -178,9 +196,10 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
     """Work out the whole run without touching anything."""
     args = _parse(argv)
     renderer = get_renderer(args.format, **_options(args))
-    planner = _Planner(args.out, renderer.extension, args.force)
+    notes = _Notes(args.out)
+    planner = _Planner(args.out, renderer, args.force, notes)
     tally = _Tally()
-    for outcome in _outcomes(args, renderer):
+    for outcome in _outcomes(args, renderer, notes):
         tally.add(outcome, planner.plan(outcome.document))
     return tally.decision(renderer, args.json)
 
@@ -188,6 +207,7 @@ def _decide(argv: Sequence[str] | None) -> _Decision:
 def _outcomes(
     args: argparse.Namespace,
     renderer: Renderer,
+    notes: _Notes,
     announce: _Announce | None = None,
 ) -> Iterator[_Outcome]:
     """Every source's outcome, one at a time, so `main` can act on each at once."""
@@ -221,6 +241,13 @@ def _outcomes(
     refusals: list[str] = []
     for position, source in enumerate(sources, start=1):
         remote = _is_remote(fetcher, source)
+        if remote and args.skip_existing:
+            # Known from the address alone, so asking YouTube is not needed.
+            identity = fetcher.identity(source)
+            existing = notes.find(identity) if identity is not None else None
+            if existing is not None:
+                yield _Outcome(source, existing=existing)
+                continue
         if remote and len(refusals) >= REFUSALS_BEFORE_STOPPING:
             # Not announced: nothing is being worked on.
             yield _Outcome(
@@ -275,28 +302,91 @@ def _refusal(error: TranscriptError) -> str | None:
     return None
 
 
+#: How a remote note's filename ends: the source id, and a counter when one
+#: run filed the same source twice. See `naming.filename_for`.
+_NAMED_FOR = re.compile(r" \((?P<id>[^()]+?)(?: \d+)?\)\.md$")
+
+
+class _Notes:
+    """This tool's Markdown notes already in `--out`, found by source id.
+
+    The folder is listed once, by name alone: a remote note's name ends with
+    its id, whatever the title was when it was written. Nothing is read until
+    a source asks, and a candidate counts only once its frontmatter confirms
+    it, so a file that merely ends the same way is never claimed.
+    """
+
+    def __init__(self, out: str | None) -> None:
+        self._named: dict[str, list[Path]] = {}
+        if out is None:
+            return
+        try:
+            entries = sorted(Path(out).iterdir())
+        except OSError:
+            # Not there yet, or unreadable: either way there is nothing to find.
+            return
+        for path in entries:
+            match = _NAMED_FOR.search(path.name)
+            if match is not None:
+                self._named.setdefault(match["id"], []).append(path)
+
+    def find(self, source_id: str, prefer: str | None = None) -> Path | None:
+        """This tool's note for `source_id`, or None.
+
+        `prefer` names the file to choose when there are several — the name
+        the source would get today — and otherwise the first by name wins.
+        """
+        candidates = self._named.get(sanitise(source_id), [])
+        for path in sorted(candidates, key=lambda path: path.name != prefer):
+            if _own_note(path, source_id) is not None:
+                return path
+        return None
+
+
 class _Planner:
     """Names `--out` files one at a time, so no two in a run collide."""
 
-    def __init__(self, out: str | None, extension: str, overwrite: bool) -> None:
+    def __init__(
+        self,
+        out: str | None,
+        renderer: Renderer,
+        overwrite: bool,
+        notes: _Notes,
+    ) -> None:
         self._directory = Path(out) if out is not None else None
-        self._extension = extension
+        self._extension = renderer.extension
+        # Only a Markdown note carries the frontmatter that makes it this
+        # tool's own. `context` also writes `.md`, under the same name, and
+        # must never be taken for a note it may update.
+        self._signs = isinstance(renderer, MarkdownRenderer)
         self._overwrite = overwrite
+        self._notes = notes
         self._taken: set[str] = set()
 
     def plan(self, document: _Document | None) -> OutputFile | None:
-        """The file this document goes to, or None when nothing is filed."""
+        """The file this document goes to, or None when nothing is filed.
+
+        A note already filed for the same video keeps its name, even when the
+        title it was named after has changed upstream since: a retitled video
+        updates its note rather than starting a second one beside it.
+        """
         if self._directory is None or document is None:
             return None
         meta = document.lecture.meta
         name = filename_for(meta.title, meta.source_id, self._extension, self._taken)
-        self._taken.add(name.rsplit(".", 1)[0].casefold())
-        return OutputFile(
-            self._directory / name,
-            document.text,
-            self._overwrite,
-            source_id=meta.source_id if meta.url else None,
-        )
+        path = self._directory / name
+        identity = meta.source_id if self._signs and meta.url else None
+        if identity is not None:
+            filed = self._notes.find(identity, prefer=name)
+            if filed is not None and _stem(filed.name) not in self._taken:
+                path = filed
+        self._taken.add(_stem(path.name))
+        return OutputFile(path, document.text, self._overwrite, source_id=identity)
+
+
+def _stem(name: str) -> str:
+    """A filename as `naming.filename_for` compares it: no extension, any case."""
+    return name.rsplit(".", 1)[0].casefold()
 
 
 class _Tally:
@@ -306,6 +396,7 @@ class _Tally:
         self.listings: list[str] = []
         self.documents: list[_Document] = []
         self.files: list[OutputFile] = []
+        self.skipped: list[Path] = []
         self.failures: list[tuple[str, TranscriptError]] = []
         self.notices: list[tuple[str, TranscriptError]] = []
 
@@ -321,6 +412,8 @@ class _Tally:
             self.notices.append((outcome.source, outcome.notice))
         elif outcome.listing is not None:
             self.listings.append(outcome.listing)
+        elif outcome.existing is not None:
+            self.skipped.append(outcome.existing)
         elif output is not None:
             self.files.append(output)
         else:
@@ -334,6 +427,7 @@ class _Tally:
             listings=tuple(self.listings),
             documents=tuple(self.documents),
             files=tuple(self.files),
+            skipped=tuple(self.skipped),
             failures=tuple(self.failures),
             notices=tuple(self.notices),
         )
@@ -371,7 +465,8 @@ def _present(
     refused = {source for source, _ in problems}
     written = tuple(f for f in decision.files if str(f.path) not in refused)
     trouble = (*decision.failures, *problems)
-    produced = decision.listings or (written if decision.files else decision.documents)
+    filed = (*written, *decision.skipped)
+    produced = decision.listings or (filed if decision.filed else decision.documents)
     code = _exit_code(produced, trouble)
 
     if decision.as_json:
@@ -453,9 +548,12 @@ def _stdout(
 ) -> str:
     if decision.listings:
         return "\n\n\n".join(decision.listings)
-    if decision.files:
+    if decision.filed:
         return "\n".join(
-            f"{states.get(str(output.path), WROTE)} {output.path}" for output in written
+            [
+                *(f"{states.get(str(f.path), WROTE)} {f.path}" for f in written),
+                *(f"{SKIPPED} {path}" for path in decision.skipped),
+            ]
         )
     # The renderer's own separator: a blank line between JSONL documents is
     # not JSONL.
@@ -555,14 +653,17 @@ def _envelope(
     """The machine-readable form: one JSON object covering the whole run.
 
     With ``--out``, `results` is empty and `files` lists what is actually on
-    disk. A write failure is keyed by its path. `warnings` (stale-cache
-    notices) do not clear `ok`, so an agent will not retry what it already has.
+    disk, `skipped` included. A write failure is keyed by its path. `warnings`
+    (stale-cache notices) do not clear `ok`, so an agent will not retry what it
+    already has.
     """
     payload = {
         "ok": not trouble,
         "results": list(decision.listings)
-        or ([] if decision.files else [d.text for d in decision.documents]),
-        "files": [str(output.path) for output in written],
+        or ([] if decision.filed else [d.text for d in decision.documents]),
+        "files": [str(output.path) for output in written]
+        + [str(path) for path in decision.skipped],
+        "skipped": [str(path) for path in decision.skipped],
         "errors": [
             {"source": source, "message": error.cause, **error.remedy}
             for source, error in trouble
@@ -674,6 +775,15 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Pass over any YouTube video that already has a note from this "
+            "tool in --out, without asking YouTube about it. For resuming a "
+            "long playlist; leave it off to refresh or correct notes."
+        ),
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="Show what transcripts exist without downloading any of them.",
@@ -747,6 +857,19 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--force applies to --out, which is what writes files")
     if args.delay < 0:
         parser.error("--delay cannot be negative")
+    if args.skip_existing and args.out is None:
+        parser.error("--skip-existing looks for notes in --out, which was not given")
+    if args.skip_existing and args.force:
+        parser.error(
+            "--skip-existing leaves existing notes alone; --force replaces them"
+        )
+    if args.skip_existing and not issubclass(
+        renderers.get(args.format), MarkdownRenderer
+    ):
+        parser.error(
+            "--skip-existing knows a note by its frontmatter, which only "
+            "--format markdown writes"
+        )
     if args.refresh and args.no_cache:
         parser.error("--refresh stores what it fetches; --no-cache stores nothing")
     if args.budget is not None and not renderers.get(args.format).takes_budget:
@@ -773,14 +896,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     _speak_utf8()
     args = _parse(argv)
     renderer = get_renderer(args.format, **_options(args))
-    planner = _Planner(args.out, renderer.extension, args.force)
+    notes = _Notes(args.out)
+    planner = _Planner(args.out, renderer, args.force, notes)
     tally = _Tally()
     problems: list[tuple[str, TranscriptError]] = []
     states: dict[str, str] = {}
     interrupted = False
 
     try:
-        for outcome in _outcomes(args, renderer, announce=_announcer(args)):
+        for outcome in _outcomes(args, renderer, notes, announce=_announcer(args)):
             output = planner.plan(outcome.document)
             if output is not None:
                 problem, state = _write_one(output)
@@ -813,7 +937,8 @@ EXIT_INTERRUPTED = 130
 _INTERRUPTED = (
     "Interrupted. Every file reported above is complete. Run the same command "
     "again to finish: fetched captions are cached, and finished notes come "
-    "back unchanged."
+    "back unchanged. Add --skip-existing to pass over finished notes without "
+    "asking YouTube about them again."
 )
 
 
@@ -881,7 +1006,11 @@ def _write(output: OutputFile) -> str:
         # with corrections, or after an upgrade — is the normal case. But only
         # while it is still as this tool left it; anything written in it since
         # is somebody's work, and an update would delete it.
-        note = _own_note(output)
+        note = (
+            _own_note(output.path, output.source_id)
+            if output.source_id is not None
+            else None
+        )
         if note is None:
             raise
         if not is_untouched(note):
@@ -895,25 +1024,23 @@ def _write(output: OutputFile) -> str:
         return UPDATED
 
 
-def _own_note(output: OutputFile) -> str | None:
-    """The file in the way, if it is this tool's note for the same video.
+def _own_note(path: Path, source_id: str) -> str | None:
+    """The file at `path`, if it is this tool's note for `source_id`.
 
     Read from its frontmatter, which names the generator and the source id.
     Line endings come back as written, whatever a sync tool did to them.
     Check-then-replace, like `_already_says`: a file swapped in between is a
     narrow race, and the worst case replaces a note claiming to be this one.
     """
-    if output.source_id is None:
-        return None
     try:
-        note = read_capped(output.path, MAX_PAYLOAD_BYTES)
+        note = read_capped(path, MAX_PAYLOAD_BYTES)
     except (OSError, UnicodeDecodeError, TranscriptError):
         return None
 
     fields = read_frontmatter(note)
     if not fields.get("generator", "").startswith(f"{GENERATOR} "):
         return None
-    return note if fields.get("source_id") == output.source_id else None
+    return note if fields.get("source_id") == source_id else None
 
 
 def _already_says(output: OutputFile) -> bool:

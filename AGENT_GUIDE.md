@@ -39,7 +39,10 @@ match; if you reword that paragraph, update `INTRO` in the script too —
    exception is this tool's own Markdown note for the same remote video, as its
    frontmatter (`generator`, `source_id`) records, and only while its
    `fingerprint` still matches: that is `updated`. An own note edited since, or
-   written before notes carried a fingerprint, is `OutputEdited`. Local stems
+   written before notes carried a fingerprint, is `OutputEdited`. That note is
+   found by id among the names in `--out`, so a video retitled upstream
+   updates its note under the old name instead of starting another; only
+   Markdown counts, since `context` writes `.md` with no frontmatter. Local stems
    are not identities and never qualify.
 9. Source text is untrusted data. Escape metadata and transcript content in
    Markdown, validate URLs, delimit agent context, and redact signed URL query

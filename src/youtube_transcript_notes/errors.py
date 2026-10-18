@@ -220,6 +220,10 @@ class NotAttempted(SourceError):
             "unchanged, and fetched captions are cached."
         ),
         "Raise --delay so the rerun spaces its requests further apart.",
+        (
+            "With --out, add --skip-existing so the rerun does not ask about "
+            "videos whose notes are already written."
+        ),
     )
 
 
