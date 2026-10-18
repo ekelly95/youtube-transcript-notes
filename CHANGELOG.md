@@ -6,7 +6,28 @@ changes.
 
 [semver]: https://semver.org/spec/v2.0.0.html
 
-## Unreleased
+## 0.6.0
+
+Notes you have written in are no longer overwritten, and long playlists are
+gentler on YouTube: a run stops once YouTube refuses it, and
+`--skip-existing` resumes without asking about videos already done. A
+retitled video keeps its note, filenames no longer break Obsidian links, and
+the repository gains one-command checks and a global skill installer.
+
+**Breaking changes**
+
+- A rerun no longer replaces this tool's own note once someone has written in
+  it. Updating a note in place — the corrections pass, an upgrade — used to
+  check only that the frontmatter named this tool and the same video, so
+  anything added to the note in Obsidian since was silently discarded and the
+  run reported `updated`. Markdown notes now end their frontmatter with a
+  `fingerprint`, a SHA-256 of the note as written, and an own note is updated
+  only while it still matches. An edited note is refused as `OUTPUT_EDITED`
+  and left as it is; `--force` still replaces it. Line endings rewritten by a
+  sync tool do not count as an edit.
+- Notes written by 0.4.0 and 0.5.0 carry no fingerprint, so they cannot show
+  they are unedited and are refused the same way. The refusal says so; if you
+  have not added to one, pass `--force` once.
 
 **Added**
 
@@ -24,21 +45,6 @@ changes.
   failing gate. The agent instructions, guide, README and skills now name it,
   and show `.venv/bin/python` first with the Windows spelling beside it,
   instead of `.venv/Scripts/python` and `ruff.exe` for everyone to translate.
-
-**Breaking changes**
-
-- A rerun no longer replaces this tool's own note once someone has written in
-  it. Updating a note in place — the corrections pass, an upgrade — used to
-  check only that the frontmatter named this tool and the same video, so
-  anything added to the note in Obsidian since was silently discarded and the
-  run reported `updated`. Markdown notes now end their frontmatter with a
-  `fingerprint`, a SHA-256 of the note as written, and an own note is updated
-  only while it still matches. An edited note is refused as `OUTPUT_EDITED`
-  and left as it is; `--force` still replaces it. Line endings rewritten by a
-  sync tool do not count as an edit.
-- Notes written by 0.4.0 and 0.5.0 carry no fingerprint, so they cannot show
-  they are unedited and are refused the same way. The refusal says so; if you
-  have not added to one, pass `--force` once.
 
 **Fixes**
 
