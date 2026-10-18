@@ -9,15 +9,15 @@ The project's test suite never touches the network — `tests/conftest.py` fails
 test that connects. Every test runs against payloads captured once and replayed
 forever. When a parser meets data it mishandles, the fix starts here.
 
-Commands are written for Windows (`.venv/Scripts/python`); on macOS and Linux
-the interpreter is `.venv/bin/python`.
+Commands are written with `.venv/bin/python`; on Windows the interpreter is
+`.venv/Scripts/python`.
 
 ## Capture
 
 Caption files:
 
 ```bash
-.venv/Scripts/python -m yt_dlp --skip-download --write-subs \
+.venv/bin/python -m yt_dlp --skip-download --write-subs \
   --sub-langs en --sub-format json3 -o 'NAME' '<url>'
 ```
 
@@ -62,7 +62,7 @@ out the right answer in advance. See `TestCrossFormatAgreement` in
 ## Verify
 
 ```bash
-.venv/Scripts/python -m coverage run -m pytest && .venv/Scripts/python -m coverage report
+.venv/bin/python scripts/check.py
 ```
 
 The test must fail before the fix and pass after. Coverage is gated at 100% with

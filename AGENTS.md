@@ -17,14 +17,12 @@ Non-negotiable rules:
   rendering free of I/O.
 - The offline suite must not use the network or the user's home directory.
 
-Before handing off a change, run:
+Before handing off a change, run every check — tests with the 100% coverage
+gate, formatting, lint and types — with the venv's interpreter:
 
 ```bash
-.venv/Scripts/python -m coverage run -m pytest
-.venv/Scripts/python -m coverage report
-.venv/Scripts/ruff.exe format --check .
-.venv/Scripts/ruff.exe check .
-.venv/Scripts/python -m mypy
+.venv/bin/python scripts/check.py      # macOS and Linux
+.venv/Scripts/python scripts/check.py  # Windows
 ```
 
-Use `pytest -m canary` only when a live YouTube check is relevant.
+Add `--canary` only when a live YouTube check is relevant.

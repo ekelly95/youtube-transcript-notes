@@ -18,6 +18,12 @@ changes.
   `~/.claude/skills` with the clone's absolute paths, so it works from any
   directory; `--check` reports a missing or stale copy. A hand-made global
   copy drifts from the repository's skill without anyone noticing.
+- `scripts/check.py` runs every gate CI runs — tests with the coverage gate,
+  formatting, lint, types, and `--canary` on request — through the interpreter
+  that runs it, so it is one command on every platform and reports every
+  failing gate. The agent instructions, guide, README and skills now name it,
+  and show `.venv/bin/python` first with the Windows spelling beside it,
+  instead of `.venv/Scripts/python` and `ruff.exe` for everyone to translate.
 
 **Breaking changes**
 

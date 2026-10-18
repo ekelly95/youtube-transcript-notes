@@ -333,7 +333,8 @@ These are reported as `TRANSPORT_CONTRACT_CHANGED` rather than as a problem
 with the video, because the video is usually fine:
 
 ```bash
-.venv/Scripts/python -m pip install -U "yt-dlp[default]"
+.venv/bin/python -m pip install -U "yt-dlp[default]"      # macOS and Linux
+.venv/Scripts/python -m pip install -U "yt-dlp[default]"  # Windows
 ```
 
 For a pipx install, `pipx runpip youtube-transcript-notes install -U
@@ -372,18 +373,17 @@ because one video was.
 
 ## Development
 
-Windows paths shown, as in Quick start; on macOS and Linux the interpreter is
-`.venv/bin/python` and the linter `.venv/bin/ruff`.
+macOS and Linux shown; on Windows the interpreter is `.venv/Scripts/python`.
 
 ```bash
-.venv/Scripts/python -m pip install -e ".[dev,youtube]"
-.venv/Scripts/python -m coverage run -m pytest
-.venv/Scripts/python -m coverage report
-.venv/Scripts/ruff.exe format --check .
-.venv/Scripts/ruff.exe check .
-.venv/Scripts/python -m mypy
-.venv/Scripts/python -m pytest -m canary  # live YouTube; opt in
+.venv/bin/python -m pip install -e ".[dev,youtube]"
+.venv/bin/python scripts/check.py           # every gate CI runs
+.venv/bin/python scripts/check.py --canary  # plus live YouTube; opt in
 ```
+
+`scripts/check.py` runs the tests with the coverage gate, then formatting, lint
+and types, each through the interpreter that runs it, and reports every gate
+that failed rather than stopping at the first.
 
 The offline suite enforces 100% branch coverage and never touches the network —
 `tests/conftest.py` fails any test that opens a connection, so every test runs

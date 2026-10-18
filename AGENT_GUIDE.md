@@ -110,17 +110,18 @@ cli.py          plan -> write -> report
 
 ## Verification
 
-Windows paths shown; on macOS and Linux the interpreter is `.venv/bin/python`
-and the linter `.venv/bin/ruff`.
+One command runs every gate, on any platform:
 
 ```bash
-.venv/Scripts/python -m coverage run -m pytest
-.venv/Scripts/python -m coverage report
-.venv/Scripts/ruff.exe format --check .
-.venv/Scripts/ruff.exe check .
-.venv/Scripts/python -m mypy
-.venv/Scripts/python -m pytest -m canary  # opt-in live YouTube
+.venv/bin/python scripts/check.py      # macOS and Linux
+.venv/Scripts/python scripts/check.py  # Windows
+.venv/bin/python scripts/check.py --canary  # also the opt-in live YouTube check
 ```
+
+It runs `coverage run -m pytest`, `coverage report`, `ruff format --check .`,
+`ruff check .` and `mypy`, each as `python -m` under the interpreter that runs
+it, and keeps going after a failure so one run shows everything. Run a single
+gate the same way, for example `.venv/bin/python -m pytest tests/test_cli.py`.
 
 The offline suite must not connect to the network or write to the user's home
 directory. `tests/conftest.py` enforces both. Add a captured fixture for source
