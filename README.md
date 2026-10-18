@@ -68,6 +68,17 @@ Claude Code reads `.claude/skills/`; Codex reads the identical workflow from
 `.agents/skills/`. To set a personal output folder or post-processing step,
 create a gitignored `LOCAL.md` beside the relevant `SKILL.md`.
 
+To use the skill from any directory rather than only inside the clone, install
+a copy into `~/.claude/skills` that names this clone's paths in full:
+
+```bash
+.venv/bin/python scripts/install_skill.py          # install or update
+.venv/bin/python scripts/install_skill.py --check  # exit 1 if out of date
+```
+
+The installed copy is generated: edit the repository's `SKILL.md` and rerun
+the script after each pull, or call it from a local `.git/hooks/post-merge`.
+
 Either way, the result is ordinary Markdown:
 
 ```markdown

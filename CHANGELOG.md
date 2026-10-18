@@ -23,6 +23,13 @@ changes.
   they are unedited and are refused the same way. The refusal says so; if you
   have not added to one, pass `--force` once.
 
+**Added**
+
+- `scripts/install_skill.py` installs the `video-notes` skill into
+  `~/.claude/skills` with the clone's absolute paths, so it works from any
+  directory; `--check` reports a missing or stale copy. A hand-made global
+  copy drifts from the repository's skill without anyone noticing.
+
 **Fixes**
 
 - Filenames drop `#`, `^`, `[` and `]`. An Obsidian wikilink reads them as a
