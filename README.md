@@ -300,6 +300,12 @@ several minutes and run the same command again — captions already fetched are
 cached, so the rerun picks up where the last one stopped. Videos in one run are
 spaced out by `--delay` (one second by default); raise it for long playlists.
 
+**`NOT_ATTEMPTED`.** After two refusals in a row — a bot check or a 429 —
+the run stops asking YouTube for anything, because every further request
+only lengthens the block. The videos it did not reach are listed once, at
+the end; local caption files in the same run are still processed. Wait, then
+run the same command again.
+
 **Errors mentioning extraction, the player response, or a signature.**
 YouTube changed something and yt-dlp has not caught up, or your copy is old.
 These are reported as `TRANSPORT_CONTRACT_CHANGED` rather than as a problem

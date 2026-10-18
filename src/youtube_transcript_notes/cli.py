@@ -28,12 +28,15 @@ from .atomic import atomic_write
 from .cache import Cache, NullCache, RefreshCache
 from .errors import (
     AcquisitionFailed,
+    BotCheck,
     InputUnreadable,
     MalformedCorrections,
+    NotAttempted,
     OutputEdited,
     OutputError,
     OutputExists,
     OutputUnwritable,
+    RateLimited,
     TranscriptError,
     UnknownProvider,
 )
@@ -61,6 +64,19 @@ DEFAULT_DELAY = 1.0
 
 #: How the run waits between remote sources; the test suite replaces it.
 _pause = time.sleep
+
+#: Refusals in a row — a bot check or HTTP 429 — after which a run stops asking
+#: YouTube for anything. One can be a single track's bad luck: the translation
+#: endpoint is throttled far sooner than the rest. Two in a row is the address,
+#: and every further request lengthens the block.
+REFUSALS_BEFORE_STOPPING = 2
+
+#: Failures that are YouTube refusing the connection, not a verdict on a video,
+#: and how a report names each.
+_REFUSALS: tuple[tuple[type[TranscriptError], str], ...] = (
+    (BotCheck, "a sign-in check"),
+    (RateLimited, "HTTP 429"),
+)
 
 #: What a write did: created or replaced (with --force), left identical, or
 #: replaced this tool's own earlier, unedited note for the same video.
@@ -201,11 +217,24 @@ def _outcomes(
         sources.extend(expansion.sources)
 
     paced = False
+    # The refusals in a row, as reported, counting remote sources only.
+    refusals: list[str] = []
     for position, source in enumerate(sources, start=1):
+        remote = _is_remote(fetcher, source)
+        if remote and len(refusals) >= REFUSALS_BEFORE_STOPPING:
+            # Not announced: nothing is being worked on.
+            yield _Outcome(
+                source,
+                failure=NotAttempted(
+                    source=source, refusals=len(refusals), reason=refusals[-1]
+                ),
+            )
+            continue
         if announce is not None:
             announce(position, len(sources), source)
+        refusal = None
         try:
-            if _is_remote(fetcher, source):
+            if remote:
                 # Between remote sources, never before the first.
                 if paced and args.delay:
                     _pause(args.delay)
@@ -214,6 +243,8 @@ def _outcomes(
             # manifest says whether this run was served from cache.
             manifest = fetcher.list(source)
             if manifest.stale_reason is not None:
+                # Served from cache, but the request was still refused.
+                refusal = _refusal(manifest.stale_reason)
                 yield _Outcome(source, notice=manifest.stale_reason)
 
             if args.list:
@@ -227,10 +258,21 @@ def _outcomes(
                     source, document=_Document(lecture, renderer.render(lecture))
                 )
         except TranscriptError as error:
+            refusal = _refusal(error)
             yield _Outcome(source, failure=error)
         except Exception as error:
             # Anything unclassified still costs one source, not the batch.
             yield _Outcome(source, failure=_wrap(source, error))
+        if remote:
+            refusals = [*refusals, refusal] if refusal is not None else []
+
+
+def _refusal(error: TranscriptError) -> str | None:
+    """How a report names this failure, if it is YouTube refusing the run."""
+    for kind, name in _REFUSALS:
+        if isinstance(error, kind):
+            return name
+    return None
 
 
 class _Planner:
@@ -449,7 +491,37 @@ def _tiers(args: argparse.Namespace) -> list[TrustTier] | None:
 
 
 def _failures(failures: Sequence[tuple[str, TranscriptError]]) -> str:
-    return "\n\n\n".join(f"{source}:\n{error}" for source, error in failures)
+    """Each failure in turn, except the sources never attempted: those share
+    one reason and one remedy, so they are listed once, together, at the end."""
+    blocks = [
+        f"{source}:\n{error}"
+        for source, error in failures
+        if not isinstance(error, NotAttempted)
+    ]
+    skipped = [
+        (source, error) for source, error in failures if isinstance(error, NotAttempted)
+    ]
+    if skipped:
+        blocks.append(_not_attempted(skipped))
+    return "\n\n\n".join(blocks)
+
+
+def _not_attempted(skipped: Sequence[tuple[str, TranscriptError]]) -> str:
+    """One block for every source the run stopped short of."""
+    first = skipped[0][1]
+    headline = (
+        f"{len(skipped)} not attempted: YouTube refused this run's last "
+        f"{first.context['refusals']} requests ({first.context['reason']}), so "
+        "the run stopped asking rather than prolong the block."
+    )
+    lines = [
+        headline,
+        *(f"  {source}" for source, _ in skipped),
+        "",
+        "What to try:",
+        *(f"  - {suggestion}" for suggestion in first.suggestions),
+    ]
+    return "\n".join(lines)
 
 
 def _report(

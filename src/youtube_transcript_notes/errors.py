@@ -25,6 +25,7 @@ __all__ = [
     "MalformedCorrections",
     "MalformedLecture",
     "NoCaptionsAvailable",
+    "NotAttempted",
     "OutputEdited",
     "OutputError",
     "OutputExists",
@@ -196,6 +197,29 @@ class RateLimited(SourceError):
             "captions are cached, so a rerun picks up where this one stopped."
         ),
         "Raise --delay to space requests further apart on large playlists.",
+    )
+
+
+class NotAttempted(SourceError):
+    """A video the run never asked for, because YouTube had stopped answering.
+
+    After refusals in a row every further request only prolongs the block, so
+    the rest of the run's videos are left for a rerun rather than spent on it.
+    """
+
+    CODE = "NOT_ATTEMPTED"
+    CAUSE = (
+        "{source!r} was not attempted: YouTube refused this run's last "
+        "{refusals} requests ({reason}), and every further request would only "
+        "prolong the block."
+    )
+    TRY = (
+        (
+            "Wait — several minutes after a rate limit, longer after a sign-in "
+            "check — then run the same command again. Finished notes come back "
+            "unchanged, and fetched captions are cached."
+        ),
+        "Raise --delay so the rerun spaces its requests further apart.",
     )
 
 

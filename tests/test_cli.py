@@ -16,7 +16,12 @@ import pytest
 from conftest import CAPTIONS, FIXTURES, load_caption, without_frontmatter
 from youtube_transcript_notes import cli
 from youtube_transcript_notes.cli import EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, main, run
-from youtube_transcript_notes.errors import AcquisitionFailed
+from youtube_transcript_notes.errors import (
+    AcquisitionFailed,
+    BotCheck,
+    LectureUnavailable,
+    RateLimited,
+)
 
 SOURCE = str(CAPTIONS)
 MISSING = "definitely-not-a-real-path-9f3a"
@@ -480,6 +485,131 @@ class TestPacing:
     def test_a_negative_delay_is_refused(self) -> None:
         with pytest.raises(SystemExit):
             run([SOURCE, "--delay", "-1"])
+
+
+class TestStoppingWhenYouTubeRefuses:
+    """Once YouTube refuses the run itself, every further request only
+    lengthens the block. The rest is left for a rerun, and said so once."""
+
+    PLAYLIST = "https://www.youtube.com/playlist?list=PL456"
+    IDS = tuple(f"Video00000{letter}" for letter in "ABCDE")
+
+    @classmethod
+    def _wire(cls, monkeypatch: pytest.MonkeyPatch, refused: dict[str, type]) -> list:
+        """Five videos; each in `refused` fails with its refusal. Returns the
+        videos YouTube was asked about, in order."""
+        from youtube_transcript_notes.sources import youtube
+
+        info = json.loads(
+            (FIXTURES / "youtube" / "HtSuA80QTyo.info.json").read_text(encoding="utf-8")
+        )
+        asked: list[str] = []
+
+        def per_video(url: str) -> dict:
+            video = url.rsplit("v=", 1)[1]
+            asked.append(video)
+            if video in refused:
+                raise refused[video](source=url)
+            return {**info, "id": video, "title": f"Lecture {video}"}
+
+        monkeypatch.setattr(
+            youtube,
+            "_extract_flat_info",
+            lambda url: {"id": "PL456", "entries": [{"id": v} for v in cls.IDS]},
+        )
+        monkeypatch.setattr(youtube, "_extract_info", per_video)
+        monkeypatch.setattr(
+            youtube,
+            "_open_url",
+            lambda url, source="youtube": load_caption("mit6006-lec1.manual.en.json3"),
+        )
+        return asked
+
+    def test_two_refusals_in_a_row_stop_the_requests(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        asked = self._wire(monkeypatch, dict.fromkeys(self.IDS[1:], BotCheck))
+
+        result = run([self.PLAYLIST, "--json", "--no-cache"])
+
+        assert asked == list(self.IDS[:3])
+        # Pauses before the second and third; none for what is never asked.
+        assert no_pacing == [cli.DEFAULT_DELAY, cli.DEFAULT_DELAY]
+        assert result.exit_code == EXIT_PARTIAL
+        errors = json.loads(result.text)["errors"]
+        assert [e["code"] for e in errors] == ["BOT_CHECK"] * 2 + ["NOT_ATTEMPTED"] * 2
+        assert errors[-1]["context"] == {
+            "source": f"https://www.youtube.com/watch?v={self.IDS[4]}",
+            "refusals": 2,
+            "reason": "a sign-in check",
+        }
+
+    def test_a_success_in_between_starts_the_count_again(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        """One 429 can be a single track's bad luck, not the address."""
+        refused = {self.IDS[0]: RateLimited, self.IDS[2]: RateLimited}
+        asked = self._wire(monkeypatch, refused)
+
+        result = run([self.PLAYLIST, "--json", "--no-cache"])
+
+        assert asked == list(self.IDS)
+        codes = [e["code"] for e in json.loads(result.text)["errors"]]
+        assert codes == ["RATE_LIMITED", "RATE_LIMITED"]
+
+    def test_other_failures_do_not_count(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        """A deleted video is a verdict on that video, not on the run."""
+        asked = self._wire(monkeypatch, dict.fromkeys(self.IDS, LectureUnavailable))
+
+        run([self.PLAYLIST, "--no-cache"])
+
+        assert asked == list(self.IDS)
+
+    def test_local_files_still_render_after_youtube_stops(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        self._wire(monkeypatch, dict.fromkeys(self.IDS, RateLimited))
+        course = _course(tmp_path / "course", weeks=1)
+
+        result = run([self.PLAYLIST, str(course), "--format", "plain", "--no-cache"])
+
+        assert result.exit_code == EXIT_PARTIAL
+        assert "Creative Commons license" in result.text
+
+    def test_the_report_lists_what_was_skipped_once(
+        self, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        self._wire(monkeypatch, dict.fromkeys(self.IDS, RateLimited))
+
+        report = run([self.PLAYLIST, "--no-cache"]).report
+
+        assert "3 not attempted: YouTube refused this run's last 2 requests" in report
+        assert "(HTTP 429)" in report
+        assert all(
+            f"\n  https://www.youtube.com/watch?v={v}" in report for v in self.IDS[2:]
+        )
+        # One remedy for the skipped lot, beside each refusal's own.
+        assert report.count("run the same command again") == 3
+
+    def test_a_refusal_answered_from_cache_still_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_pacing: list[float]
+    ) -> None:
+        """The cached note is real, but the request behind it was refused."""
+        TestServedFromCacheIsAnnounced._warm(tmp_path)
+        asked = self._wire(
+            monkeypatch, {LECTURE: BotCheck, **dict.fromkeys(self.IDS, BotCheck)}
+        )
+
+        result = run(
+            [LECTURE, LECTURE, self.IDS[0], "--json", "--cache", str(tmp_path)]
+        )
+
+        assert asked == [LECTURE, LECTURE]
+        payload = json.loads(result.text)
+        assert len(payload["results"]) == 2
+        assert [e["code"] for e in payload["errors"]] == ["NOT_ATTEMPTED"]
 
 
 def _course(directory: Path, weeks: int = 3) -> Path:
