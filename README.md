@@ -98,7 +98,7 @@ Srini Devadas. I'm a professor of electrical engineering and computer science…
 - Caches captions and metadata so previously fetched videos remain available
   during a YouTube or yt-dlp outage.
 - Refuses to replace a note it did not write unless `--force` is explicit; its
-  own notes are updated in place.
+  own notes are updated in place, unless you have written in them since.
 
 ## CLI
 
@@ -228,15 +228,20 @@ unrelated note. Local files keep their stem.
 Markdown notes open with YAML frontmatter — title, source ID, URL, channel,
 publication date, caption tier and language — which Obsidian shows as
 properties and Dataview can query. Every value is quoted and escaped, so a
-hostile title stays inert.
+hostile title stays inert. The last field, `fingerprint`, is a SHA-256 of the
+note as written, which is how a later run tells an untouched note from one you
+have added to.
 
 If the chosen name already contains identical output, the run reports
 `unchanged`. If it holds this tool's own note for the same YouTube video (its
-frontmatter says so), the note is re-rendered and reported as `updated` — this
-is how a corrections pass or an upgrade refreshes a note. Anything else is
-refused unless `--force` is given: a note you wrote, another video's note, or
-any local-file note, because a filename stem is not a unique identity. Notes
-written before 0.4.0 have no frontmatter, so refresh those once with `--force`.
+frontmatter says so) and nobody has changed it since — its fingerprint still
+matches — the note is re-rendered and reported as `updated`. This is how a
+corrections pass or an upgrade refreshes a note. Anything else is refused
+unless `--force` is given: a note you have edited, even only a property, a
+note you wrote, another video's note, or any local-file note, because a
+filename stem is not a unique identity. Notes written before 0.6.0 carry no
+fingerprint, so if you have not added to them, refresh them once with
+`--force`.
 A title changed upstream creates a new file and leaves the old one alone.
 
 The default cache is:

@@ -30,18 +30,20 @@ from .errors import (
     AcquisitionFailed,
     InputUnreadable,
     MalformedCorrections,
+    OutputEdited,
+    OutputError,
     OutputExists,
     OutputUnwritable,
     TranscriptError,
     UnknownProvider,
 )
-from .limits import MAX_CORRECTIONS, MAX_GLOSSARY_BYTES, read_capped
+from .limits import MAX_CORRECTIONS, MAX_GLOSSARY_BYTES, MAX_PAYLOAD_BYTES, read_capped
 from .models import Lecture, TrustTier
 from .naming import filename_for
 from .redact import redact
 from .refine import Glossary, read_corrections, read_glossary
 from .render import Renderer, get_renderer, renderers
-from .render.markdown import GENERATOR, read_frontmatter
+from .render.markdown import FINGERPRINT, GENERATOR, is_untouched, read_frontmatter
 from .resolve import TrackManifest
 
 __all__ = ["CliResult", "OutputFile", "main", "run"]
@@ -61,11 +63,20 @@ DEFAULT_DELAY = 1.0
 _pause = time.sleep
 
 #: What a write did: created or replaced (with --force), left identical, or
-#: replaced this tool's own earlier note for the same video.
+#: replaced this tool's own earlier, unedited note for the same video.
 WROTE, UNCHANGED, UPDATED = "wrote", "unchanged", "updated"
 
-#: How much of a file in the way is read to find its frontmatter.
-_FRONTMATTER_PROBE = 4096
+#: Why an own note is refused: it was edited, or it predates the fingerprint
+#: and so cannot show it was not.
+_EDITED = "it has been edited since this tool wrote it"
+_UNSEALED = (
+    "it was written by an earlier version that recorded no fingerprint, so "
+    "there is no telling whether it has been edited"
+)
+_UNSEALED_TRY = (
+    "If you have not added anything to it, pass --force once. Notes written "
+    "from now on carry a fingerprint and are updated without it."
+)
 
 
 @dataclass(frozen=True)
@@ -774,6 +785,8 @@ def _write_one(output: OutputFile) -> tuple[TranscriptError | None, str]:
         return None, _write(output)
     except FileExistsError:
         return OutputExists(path=where), ""
+    except OutputError as error:
+        return error, ""
     except OSError as error:
         return OutputUnwritable(path=where, detail=error.strerror or str(error)), ""
     except Exception as error:
@@ -793,33 +806,42 @@ def _write(output: OutputFile) -> str:
         if _already_says(output):
             return UNCHANGED
         # Nor does this tool's own note for the same video: re-rendering it —
-        # with corrections, or after an upgrade — is the normal case.
-        if _is_own_note(output):
-            atomic_write(output.path, output.text, overwrite=True)
-            return UPDATED
-        raise
+        # with corrections, or after an upgrade — is the normal case. But only
+        # while it is still as this tool left it; anything written in it since
+        # is somebody's work, and an update would delete it.
+        note = _own_note(output)
+        if note is None:
+            raise
+        if not is_untouched(note):
+            sealed = FINGERPRINT in read_frontmatter(note)
+            raise OutputEdited(
+                path=str(output.path),
+                detail=_EDITED if sealed else _UNSEALED,
+                also_try=() if sealed else (_UNSEALED_TRY,),
+            ) from None
+        atomic_write(output.path, output.text, overwrite=True)
+        return UPDATED
 
 
-def _is_own_note(output: OutputFile) -> bool:
-    """Whether the file in the way is this tool's note for the same video.
+def _own_note(output: OutputFile) -> str | None:
+    """The file in the way, if it is this tool's note for the same video.
 
     Read from its frontmatter, which names the generator and the source id.
+    Line endings come back as written, whatever a sync tool did to them.
     Check-then-replace, like `_already_says`: a file swapped in between is a
     narrow race, and the worst case replaces a note claiming to be this one.
     """
     if output.source_id is None:
-        return False
+        return None
     try:
-        with output.path.open(encoding="utf-8") as handle:
-            head = handle.read(_FRONTMATTER_PROBE)
-    except (OSError, UnicodeDecodeError):
-        return False
+        note = read_capped(output.path, MAX_PAYLOAD_BYTES)
+    except (OSError, UnicodeDecodeError, TranscriptError):
+        return None
 
-    fields = read_frontmatter(head)
-    return (
-        fields.get("generator", "").startswith(f"{GENERATOR} ")
-        and fields.get("source_id") == output.source_id
-    )
+    fields = read_frontmatter(note)
+    if not fields.get("generator", "").startswith(f"{GENERATOR} "):
+        return None
+    return note if fields.get("source_id") == output.source_id else None
 
 
 def _already_says(output: OutputFile) -> bool:

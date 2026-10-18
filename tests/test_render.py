@@ -7,6 +7,7 @@ a bug. These are golden values; when one changes, the diff should be read.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import replace
@@ -19,9 +20,17 @@ from youtube_transcript_notes import __version__
 from youtube_transcript_notes.errors import UnknownRenderer
 from youtube_transcript_notes.models import Correction, Lecture, Passage, Section
 from youtube_transcript_notes.render import get_renderer, renderers
-from youtube_transcript_notes.render.markdown import read_frontmatter
+from youtube_transcript_notes.render.markdown import is_untouched, read_frontmatter
 
 FULL_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+def _sealed(note: str) -> str:
+    """A golden note with the fingerprint it should carry, worked out here
+    rather than by the renderer: SHA-256 of the note without that line, as the
+    frontmatter's last field."""
+    digest = hashlib.sha256(note.encode("utf-8")).hexdigest()
+    return note.replace("\n---\n", f'\nfingerprint: "sha256:{digest}"\n---\n', 1)
 
 
 class TestRegistryWiring:
@@ -96,7 +105,7 @@ class TestMarkdown:
             "subproblem upwards we can drop the recursion entirely.\n"
         )
 
-        assert get_renderer("markdown").render(full_lecture) == expected
+        assert get_renderer("markdown").render(full_lecture) == _sealed(expected)
 
     def test_minimal_lecture_golden(self, minimal_lecture: Lecture) -> None:
         # No channel, date or URL, no section heading, and a bare timestamp
@@ -119,7 +128,7 @@ class TestMarkdown:
             "**[0:00]** right so where were we\n"
         )
 
-        assert get_renderer("markdown").render(minimal_lecture) == expected
+        assert get_renderer("markdown").render(minimal_lecture) == _sealed(expected)
 
     def test_ends_with_exactly_one_newline(self, full_lecture: Lecture) -> None:
         output = get_renderer("markdown").render(full_lecture)
@@ -249,6 +258,40 @@ class TestFrontmatter:
         text = '---\ntitle: "unterminated\nsource_id: "abc"\nnote: plain\n---\n'
 
         assert read_frontmatter(text) == {"source_id": "abc"}
+
+    def test_a_note_as_written_is_untouched(self, full_lecture: Lecture) -> None:
+        assert is_untouched(get_renderer("markdown").render(full_lecture))
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            # A paragraph of the reader's own, the commonest edit.
+            lambda note: note + "\n## My notes\n\nworth rewatching\n",
+            # A property added in a notes app.
+            lambda note: note.replace("---\n", '---\ntags: "study"\n', 1),
+            # A word changed in the transcript itself.
+            lambda note: note.replace("powerful", "useful", 1),
+            # Something removed.
+            lambda note: note.replace("## Bottom-up tables\n\n", "", 1),
+        ],
+    )
+    def test_any_edit_breaks_the_seal(self, full_lecture: Lecture, edit) -> None:
+        note = get_renderer("markdown").render(full_lecture)
+        edited = edit(note)
+
+        assert edited != note
+        assert not is_untouched(edited)
+
+    def test_a_forged_or_missing_fingerprint_proves_nothing(
+        self, full_lecture: Lecture
+    ) -> None:
+        note = get_renderer("markdown").render(full_lecture)
+        unsealed = re.sub(r"\nfingerprint: .*", "", note, count=1)
+        forged = re.sub(r'(fingerprint: "sha256:)[0-9a-f]', r"\g<1>x", note, count=1)
+
+        assert not is_untouched(unsealed)
+        assert not is_untouched(forged)
+        assert not is_untouched("# just a note\n")
 
     @pytest.mark.parametrize("name", ["plain", "citation", "context", "jsonl"])
     def test_other_formats_carry_none(self, full_lecture: Lecture, name: str) -> None:

@@ -25,6 +25,7 @@ __all__ = [
     "MalformedCorrections",
     "MalformedLecture",
     "NoCaptionsAvailable",
+    "OutputEdited",
     "OutputError",
     "OutputExists",
     "OutputUnwritable",
@@ -610,4 +611,25 @@ class OutputExists(OutputError):
         "Pass --force to replace files that are already there.",
         "Or move the existing file out of the way and run it again.",
         "Or write into an empty directory with --out.",
+    )
+
+
+class OutputEdited(OutputError):
+    """This tool's note for the same video, but not as this tool left it.
+
+    Updating it in place is what a rerun normally does; here it would discard
+    whatever someone added, so the note is refused like any other file.
+    """
+
+    CODE = "OUTPUT_EDITED"
+    CAUSE = (
+        "{path} is this tool's note for the same video, but {detail}, so it "
+        "was left alone and nothing was written."
+    )
+    TRY = (
+        (
+            "Copy anything you added into a note of your own, delete this one, "
+            "and run again."
+        ),
+        "Or pass --force to replace it, additions and all.",
     )
