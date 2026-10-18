@@ -7,6 +7,7 @@ stdout, which is the entire point of having `run` return its output.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -765,6 +766,84 @@ class TestRegeneratingItsOwnNotes:
         assert "Erik Domane [Erik Demaine]" in (notes / self.NAME).read_text(
             encoding="utf-8"
         )
+
+    def _first_run(self, notes: Path, capsys) -> Path:
+        assert main([SOURCE, "--out", str(notes)]) == EXIT_OK
+        capsys.readouterr()
+        return notes / self.NAME
+
+    def test_a_note_written_in_since_is_refused_and_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        """The reader's own paragraphs are not the tool's to throw away."""
+        _remote_identity(monkeypatch, self.VIDEO)
+        note = self._first_run(tmp_path / "notes", capsys)
+        mine = note.read_text(encoding="utf-8") + "\n## My notes\n\nrewatch 12:00\n"
+        note.write_text(mine, encoding="utf-8")
+
+        code = main(
+            [
+                SOURCE,
+                "--out",
+                str(note.parent),
+                "--corrections",
+                self._corrections(tmp_path),
+                "--json",
+            ]
+        )
+
+        assert code == EXIT_FAILED
+        assert note.read_text(encoding="utf-8") == mine
+        (error,) = json.loads(capsys.readouterr().out)["errors"]
+        assert error["code"] == "OUTPUT_EDITED"
+        assert "edited since" in error["message"]
+
+    def test_force_still_replaces_an_edited_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        note = self._first_run(tmp_path / "notes", capsys)
+        fresh = note.read_text(encoding="utf-8")
+        note.write_text(fresh + "\nmine\n", encoding="utf-8")
+
+        assert main([SOURCE, "--out", str(note.parent), "--force"]) == EXIT_OK
+        assert note.read_text(encoding="utf-8") == fresh
+
+    def test_a_note_from_before_fingerprints_needs_force_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        """0.4 and 0.5 notes cannot show they are unedited, so they are not
+        presumed to be — and the refusal says why and what to do."""
+        _remote_identity(monkeypatch, self.VIDEO)
+        note = self._first_run(tmp_path / "notes", capsys)
+        legacy = re.sub(r"\nfingerprint: .*", "", note.read_text(encoding="utf-8"))
+        note.write_text(legacy, encoding="utf-8")
+
+        assert main([SOURCE, "--out", str(note.parent)]) == EXIT_FAILED
+        report = capsys.readouterr().err
+        assert "recorded no fingerprint" in report
+        assert "pass --force once" in report
+        assert note.read_text(encoding="utf-8") == legacy
+
+    def test_line_endings_a_sync_tool_changed_are_not_an_edit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        _remote_identity(monkeypatch, self.VIDEO)
+        note = self._first_run(tmp_path / "notes", capsys)
+        note.write_bytes(note.read_bytes().replace(b"\n", b"\r\n"))
+
+        code = main(
+            [
+                SOURCE,
+                "--out",
+                str(note.parent),
+                "--corrections",
+                self._corrections(tmp_path),
+            ]
+        )
+
+        assert code == EXIT_OK
+        assert capsys.readouterr().out.startswith("updated ")
 
     def test_a_hand_written_file_at_that_name_is_still_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

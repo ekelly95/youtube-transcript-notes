@@ -71,7 +71,9 @@ as `unmarked`.
    source the tool recognises its own note from step 3 and reports `updated`.
    For a local caption file it cannot, and refuses: check that the refusal
    names the file step 3 wrote, then add `--force` — a conflict anywhere else
-   goes back to the user. Never rewrite transcript text directly.
+   goes back to the user. `OUTPUT_EDITED` means someone has written in the
+   note since the tool made it: never `--force` past it without the user's
+   say-so. Never rewrite transcript text directly.
    A digit correction requires explicit contextual or audio evidence. Add a
    recurring, non-numeric correction to the matching file in `glossaries/`
    (or start one for a new field) as `Right Form: wrong form`. Never add a

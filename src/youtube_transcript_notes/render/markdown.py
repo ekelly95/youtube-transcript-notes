@@ -2,11 +2,13 @@
 
 Any sentence can be traced back to the moment it was said, in one click. A
 YAML frontmatter block carries the citation fields for notes apps (Obsidian
-properties, Dataview) and lets the CLI recognise a note it wrote itself.
+properties, Dataview) and lets the CLI recognise a note it wrote itself — and
+tell whether anyone has written in it since.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Sequence
@@ -24,10 +26,21 @@ from ..models import (
 from .base import Renderer, renderers
 from .escape import body, body_resumed, label, safe_url
 
-__all__ = ["GENERATOR", "MarkdownRenderer", "read_frontmatter"]
+__all__ = [
+    "FINGERPRINT",
+    "GENERATOR",
+    "MarkdownRenderer",
+    "is_untouched",
+    "read_frontmatter",
+]
 
 #: How a note names the tool that wrote it, in its `generator` field.
 GENERATOR = "youtube-transcript-notes"
+
+#: The frontmatter field that seals a note: a digest of exactly what was
+#: written, its own line left out. A note that no longer matches has been
+#: edited, so it is somebody's work as well as this tool's.
+FINGERPRINT = "fingerprint"
 
 #: Without published chapters, a heading every this many seconds...
 _TIME_HEADING_SECONDS = 600
@@ -65,7 +78,7 @@ class MarkdownRenderer(Renderer):
                 lines += [f"{stamp}{_who(passage, named)} {marker(passage.text)}", ""]
 
         lines += _corrections(lecture.corrections)
-        return "\n".join(lines).rstrip() + "\n"
+        return _sealed("\n".join(lines).rstrip() + "\n")
 
 
 def _wants_time_headings(lecture: Lecture) -> bool:
@@ -138,6 +151,36 @@ def _inert(char: str) -> str:
     if not char.isprintable():
         return char.encode("unicode_escape").decode("ascii")
     return char
+
+
+def _sealed(note: str) -> str:
+    """The note with its fingerprint added as the last frontmatter field.
+
+    Field values are single-line, so the first ``\\n---\\n`` closes the block.
+    """
+    line = f"{FINGERPRINT}: {_scalar(_digest(note))}"
+    return note.replace("\n---\n", f"\n{line}\n---\n", 1)
+
+
+def _digest(note: str) -> str:
+    return "sha256:" + hashlib.sha256(note.encode("utf-8")).hexdigest()
+
+
+def is_untouched(note: str) -> bool:
+    """Whether a note is still exactly what this renderer wrote.
+
+    Anything added, removed or changed anywhere — a paragraph, a property —
+    breaks the seal. A note written before notes carried a fingerprint cannot
+    show it is untouched, so it is not. Line endings are the caller's to
+    normalise; a synced vault may have rewritten them.
+    """
+    claimed = read_frontmatter(note).get(FINGERPRINT)
+    if claimed is None:
+        return False
+    # The digest is the real check: a line placed anywhere else, or forged,
+    # leaves text behind that it does not describe.
+    seal = f"\n{FINGERPRINT}: {_scalar(claimed)}\n---\n"
+    return _digest(note.replace(seal, "\n---\n", 1)) == claimed
 
 
 def read_frontmatter(text: str) -> dict[str, str]:

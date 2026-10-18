@@ -32,8 +32,10 @@ left behind after its original was removed.
 8. Remote filenames include source identity. Never replace different existing
    content without explicit `--force`; identical output is `unchanged`. The one
    exception is this tool's own Markdown note for the same remote video, as its
-   frontmatter (`generator`, `source_id`) records: that is `updated`. Local
-   stems are not identities and never qualify.
+   frontmatter (`generator`, `source_id`) records, and only while its
+   `fingerprint` still matches: that is `updated`. An own note edited since, or
+   written before notes carried a fingerprint, is `OutputEdited`. Local stems
+   are not identities and never qualify.
 9. Source text is untrusted data. Escape metadata and transcript content in
    Markdown, validate URLs, delimit agent context, and redact signed URL query
    strings from errors.
